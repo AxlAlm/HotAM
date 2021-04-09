@@ -124,10 +124,15 @@ class DepPairingLayer(nn.Module):
             pass
         return sub_g
 
-    def build_dep_graphs(self, token_embs: Tensor, deplinks: Tensor,
-                         roots: Tensor, token_mask: Tensor, token_reps: Tensor,
-                         subgraphs: List[List[Tuple]], mode: str,
-                         assertion: bool) -> List[DGLGraph]:
+    def build_dep_graphs(self, 
+                        node_embs: Tensor, 
+                        deplinks: Tensor,
+                        roots: Tensor, 
+                        token_mask: Tensor, 
+                        subgraphs: List[List[Tuple]], 
+                        mode: str,
+                        assertion: bool
+                         ) -> List[DGLGraph]:
 
         batch_size = deplinks.size(0)
 
@@ -151,7 +156,7 @@ class DepPairingLayer(nn.Module):
             start, end = list(zip(*subgraphs[b_i]))
             if start == []:  # no candidate pair
                 continue
-
+            
             subgraph_func = functools.partial(self.get_subgraph,
                                               g=graph,
                                               g_nx=graph_unidir,
@@ -159,126 +164,229 @@ class DepPairingLayer(nn.Module):
                                               assertion=assertion)
             dep_graphs.append(dgl.batch(list(map(subgraph_func, start, end))))
             # get nodes' token embedding
-            nodes_emb.append(token_embs[b_i, dep_graphs[b_i].ndata["_ID"]])
+            nodes_emb.append(node_embs[b_i, dep_graphs[b_i].ndata["_ID"]])
 
         # batch graphs, move to model device, update nodes data by tokens
         # embedding
         nodes_emb = torch.cat(nodes_emb, dim=0)
         dep_graphs = dgl.batch(dep_graphs).to(self.device)
         dep_graphs.ndata["emb"] = nodes_emb
+        
+        # unbatching = (batch_size, max_nr_units, max_nr_units, max_tokens)
+        #
+        # nr_pairs in the whole whole sample -> max_units
+        #
+        # unbatching = (batch_size, max_pairs_in_sample, max_tokens)
+        #
+        # unbatching = (batch_size, max_units, max_units, max_tokens)
+
+        # the shape == ((all nodes in all possible pairs over all batches, lstm_dim*nr_directions) )
 
         return dep_graphs
 
+    
+
+    def graph_unbatch(self, graphs, token_embs, all_possible_pairs, unit_span_indexes, tree_lstm_hidden_size):
+        """
+
+
+        """
+        #unit_embs = (batch_size, max_units, embs_size)
+        #word_embs = (batch_size, max_tokens, emb_size)
+
+        #pair_rep = HpA;hp<;hp> + S
+        # big_boi[1][1] = all_possible_links
+        # big_boi[1][1][0] = represenation of linking to itself.
+        # after we have dont classification:
+        # clf(big_boi) = logits
+        # logits[1][1][0] = probability of unit 1 in sample 1 beeing linked to 0
+
+        pair_rep_size = (tree_lstm_hidden_size*3) * token_embs.shape[-1]
+        max_units = 10
+        batch_size = 32
+        batch_outs = torch.zeros((batch_size, max_units, max_units, pair_rep_size)) 
+
+        bu_gs = dgl.unbatch(graphs["bu"])
+        td_gs = dgl.unbatch(graphs["td"])
+
+        # all_possible_pairs["idx"] is all possible units idx pairs.
+        # all_possible_pairs["start"] (or "end") will give you pairs of token indexes insteado unit indexes
+        #
+        # i = batch index
+        # j = pair inde
+        # jj_n,ii_n = start and end index in sample of unit_n (Ip1 and Ip2 in the paper)
+        # u1_i, u2_i = indexes of units in a sample for a given pair
+        for i in range(batch_size):
+            bu_g = dgl.unbatch(bu_gs[i])
+            td_g = dgl.unbatch(td_gs[i])
+ 
+            for j,(j_bu_g, j_td_g) in enumerate(zip(td_g, bu_g)):
+            
+                u1_i, u2_i = all_possible_pairs["idx"][i][j]
+
+                # get [↑hpA; ↓hp1; ↓hp2 ]
+                root_id = (j_bu_g.ndata["root"] == 1)
+                start_id = j_bu_g.ndata["start"] == 1
+                end_id = j_bu_g.ndata["end"] == 1    
+                HpA = j_bu_g.ndata["h"][root_id] 
+                Hp1_td = j_td_g.ndata["h"][start_id]
+                Hp2_td = j_td_g.ndata["h"][end_id]
+
+                # create s, the average embeddings for each units
+                ii_1, jj_1  = unit_span_indexes[i][u1_i]
+                ii_2, jj_2  = unit_span_indexes[i][u1_2]
+                avrg_emb_unit1 = torch.mean(token_embs[i][ii_1:jj_1], dim=-1)
+                avrg_emb_unit2 = torch.mean(token_embs[i][ii_2:jj_2], dim=-1)
+
+                # create the concatenation of the above representations
+                # dp´ = [↑hpA; ↓hp1; ↓hp2 ; s]
+                batch_outs[i][u1_i][u2_i] = torch.cat((
+                                                            HpA, 
+                                                            Hp1_td, 
+                                                            Hp2_td,
+                                                            avrg_emb_unit1,
+                                                            avrg_emb_unit2,
+                                                            ),
+                                                            dim=-1
+                                                            )
+        
+        return batch_outs
+
+
     def forward(self,
-                input_embs: Tensor,
-                unit_repr: Tensor,
-                unit_num: list,
+                node_embs: Tensor,
+                token_embs: Tensor,
                 dependencies: Tensor,
                 token_mask: Tensor,
                 roots: Tensor,
                 pairs: DefaultDict[str, List[List[Tuple[int]]]],
                 mode: str = "shortest_path",
-                assertion: bool = False):
+                assertion: bool = False
+                ):
 
         mode_bool = mode in self.__supported_modes
         assert mode_bool, f"{mode} is not a supported mode for DepPairingLayer"
 
-        self.device = input_embs.device
+        self.device = node_embs.device
         dir_n = 2 if self.tree_lstm_bidir else 1
-        batch_size = input_embs.size(0)
+        batch_size = node_embs.size(0)
 
         # 8)
-        dep_graphs = self.build_dep_graphs(token_embs=input_embs,
-                                           deplinks=dependencies,
-                                           roots=roots,
-                                           token_mask=token_mask,
-                                           token_reps=input_embs,
-                                           subgraphs=pairs["end"],
-                                           mode=mode,
-                                           assertion=assertion)
+        print("graph_start")
+        dep_graphs = self.build_dep_graphs(
+                                            node_embs=node_embs,
+                                            deplinks=dependencies,
+                                            roots=roots,
+                                            token_mask=token_mask,
+                                            subgraphs=pairs["end"],
+                                            mode=mode,
+                                            assertion=assertion
+                                           )
+        print("graph done")
 
         # 9)
-        h0 = torch.zeros(dep_graphs.num_nodes(),
-                         self.tree_lstm_h_size,
-                         device=self.device)
+        h0 = torch.zeros(
+                        dep_graphs.num_nodes(),
+                        self.tree_lstm_h_size,
+                        device=self.device
+                        )
         c0 = torch.zeros_like(h0)
-        tree_lstm_out = self.tree_lstm(dep_graphs, h0, c0)
+        
+        # 2D tensor representing the nodes in the trees for a give mode.
+        # e.g. if mode == "shortest path" 
+        # the shape == ( (all nodes in all possible pairs over all batches, lstm_dim*nr_directions) )
+        # tree_lstm_out[i] = node in the shortest of some pair.
 
-        # construct dp = [↑hpA; ↓hp1; ↓hp2]
-        # ↑hpA: hidden state of dep_graphs' root
-        # ↓hp1: hidden state of the first token in the candidate pair
-        # ↓hp2: hidden state of the second token in the candidate pair
-        # get ids of roots and tokens in relation
-        root_id = (dep_graphs.ndata["root"] == 1)
-        start_id = dep_graphs.ndata["start"] == 1
-        end_id = dep_graphs.ndata["end"] == 1
-        tree_lstm_out = tree_lstm_out.view(-1, dir_n, self.tree_lstm_h_size)
-        tree_logits = tree_lstm_out[root_id, 0, :]  # ↑hpA
-        if self.tree_lstm_bidir:
-            hp1 = tree_lstm_out[start_id, 1, :]  # ↓hp1
-            hp2 = tree_lstm_out[end_id, 1, :]  # ↓hp2
-            tree_logits = torch.cat((tree_logits, hp1, hp2), dim=-1)
-        # [dp; s]
-        link_label_input_repr = torch.cat((tree_logits, unit_repr), dim=-1)
-        logits = self.label_link_clf(link_label_input_repr)
-        prob_dist = F.softmax(logits, dim=-1)
+        graphs = self.tree_lstm(dep_graphs, h0, c0)
+        pair_matrix = self.graph_unbatch(graphs, token_embs, pairs, [], h0.shape[-1])
 
-        # NOTE: When there are multiple equal values, torch.argmax() and
-        # torch.max() do not return the first max value.  Instead, they
-        # randamly return any valid index.
+        print(pair_matrix)
 
-        # reshape logits and prob into 4d tensors
-        size_4d = [
-            batch_size,
-            max(unit_num),
-            max(unit_num),
-            prob_dist.size(-1)
-        ]
-        prob_4d = input_embs.new_ones(size=size_4d) * -1
-        logits_4d = input_embs.new_ones(size=size_4d) * -1
-        unit_start = []
-        unit_end = []
+        # # construct dp = [↑hpA; ↓hp1; ↓hp2]
+        # # ↑hpA: hidden state of dep_graphs' root
+        # # ↓hp1: hidden state of the first token in the candidate pair
+        # # ↓hp2: hidden state of the second token in the candidate pair
+        # # get ids of roots and tokens in relation
+        # root_id = (dep_graphs.ndata["root"] == 1)
+        # start_id = dep_graphs.ndata["start"] == 1
+        # end_id = dep_graphs.ndata["end"] == 1
 
-        # split prob_dist and logits based on number of pairs in each batch
-        pair_num = list(map(len, pairs["end"]))
-        prob_ = torch.split(prob_dist, split_size_or_sections=pair_num)
-        logits_ = torch.split(logits, split_size_or_sections=pair_num)
+        # # [root_pair1_sample1, ... , root_pairN_sampleN]
+        
+        # #(((batch_size * nodes_in_each_sample), nr_dirs, lstm_dim)
+        # tree_lstm_out = tree_lstm_out.view(-1, dir_n, self.tree_lstm_h_size)
+        # tree_logits = tree_lstm_out[root_id, 0,:]  # ↑hpA
+        # if self.tree_lstm_bidir:
+        #     hp1 = tree_lstm_out[start_id, 1, :]  # ↓hp1
+        #     hp2 = tree_lstm_out[end_id, 1, :]  # ↓hp2
+        #     tree_logits = torch.cat((tree_logits, hp1, hp2), dim=-1)
 
-        # fill 4d tensors
-        data = zip(prob_, logits_, pairs["start"], pairs["end"], unit_num)
-        for i, (prob, logs, s, e, n) in enumerate(data):
-            if n > 0:
-                prob_4d[i, :n, :n] = prob.view(n, n, -1)
-                logits_4d[i, :n, :n] = logs.view(n, n, -1)
-                unit_start.extend(list(zip(*s))[1][:n])
-                unit_end.extend(list(zip(*e))[1][:n])
+        # # [dp; s]
 
-        # get link label max logits and link_label and link predictions
-        prob_max_pair, _ = torch.max(prob_4d, dim=-1)
-        link_preds = torch.argmax(prob_max_pair, dim=-1)
-        link_label_prob_dist = index_4D(prob_4d, index=link_preds)
-        link_label_preds = torch.argmax(link_label_prob_dist, dim=-1)
-        link_label_max_logits = index_4D(logits_4d, index=link_preds)
+        # print("TREE LOGITS", tree_logits.shape)
 
-        link_label_max_logits = unfold_matrix(
-            matrix_to_fold=link_label_max_logits,
-            start_idx=unit_start,
-            end_idx=unit_end,
-            class_num_betch=unit_num,
-            fold_dim=input_embs.size(1))
+        # link_label_input_repr = torch.cat((tree_logits, unit_repr), dim=-1)
+        # logits = self.label_link_clf(link_label_input_repr)
+        # prob_dist = F.softmax(logits, dim=-1)
 
-        link_label_preds = unfold_matrix(matrix_to_fold=link_label_preds,
-                                         start_idx=unit_start,
-                                         end_idx=unit_end,
-                                         class_num_betch=unit_num,
-                                         fold_dim=input_embs.size(1))
+        # # NOTE: When there are multiple equal values, torch.argmax() and
+        # # torch.max() do not return the first max value.  Instead, they
+        # # randamly return any valid index.
 
-        link_preds = unfold_matrix(matrix_to_fold=link_preds,
-                                   start_idx=unit_start,
-                                   end_idx=unit_end,
-                                   class_num_betch=unit_num,
-                                   fold_dim=input_embs.size(1))
+        # # reshape logits and prob into 4d tensors
+        # size_4d = [
+        #                 batch_size,
+        #                 max(unit_num),
+        #                 max(unit_num),
+        #                 prob_dist.size(-1)
+        #             ]
+        # prob_4d = input_embs.new_ones(size=size_4d) * -1
+        # logits_4d = input_embs.new_ones(size=size_4d) * -1
+        # unit_start = []
+        # unit_end = []
 
-        # Would not be easier to save a mapping ac_id, token_strat/end, instead
-        # of all of these calc and loops !
-        return [link_label_max_logits, link_label_preds, link_preds]
+        # # split prob_dist and logits based on number of pairs in each batch
+        # pair_num = list(map(len, pairs["end"]))
+        # prob_ = torch.split(prob_dist, split_size_or_sections=pair_num)
+        # logits_ = torch.split(logits, split_size_or_sections=pair_num)
+
+        # # fill 4d tensors
+        # data = zip(prob_, logits_, pairs["start"], pairs["end"], unit_num)
+
+        # #len = batch_size *
+        # for i, (prob, logs, s, e, n) in enumerate(data):
+        #     if n > 0:
+        #         prob_4d[i, :n, :n] = prob.view(n, n, -1)
+        #         logits_4d[i, :n, :n] = logs.view(n, n, -1)
+        #         unit_start.extend(list(zip(*s))[1][:n])
+        #         unit_end.extend(list(zip(*e))[1][:n])
+
+        # # get link label max logits and link_label and link predictions
+        # prob_max_pair, _ = torch.max(prob_4d, dim=-1)
+        # link_preds = torch.argmax(prob_max_pair, dim=-1)
+        # link_label_prob_dist = index_4D(prob_4d, index=link_preds)
+        # link_label_preds = torch.argmax(link_label_prob_dist, dim=-1)
+        # link_label_max_logits = index_4D(logits_4d, index=link_preds)
+
+        # link_label_max_logits = unfold_matrix(
+        #     matrix_to_fold=link_label_max_logits,
+        #     start_idx=unit_start,
+        #     end_idx=unit_end,
+        #     class_num_betch=unit_num,
+        #     fold_dim=input_embs.size(1))
+
+        # link_label_preds = unfold_matrix(matrix_to_fold=link_label_preds,
+        #                                  start_idx=unit_start,
+        #                                  end_idx=unit_end,
+        #                                  class_num_betch=unit_num,
+        #                                  fold_dim=input_embs.size(1))
+
+        # link_preds = unfold_matrix(matrix_to_fold=link_preds,
+        #                            start_idx=unit_start,
+        #                            end_idx=unit_end,
+        #                            class_num_betch=unit_num,
+        #                            fold_dim=input_embs.size(1))
+
+        # # Would not be easier to save a mapping ac_id, token_strat/end, instead
+        # # of all of these calc and loops !
+        # return link_label_max_logits, link_label_preds, link_preds

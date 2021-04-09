@@ -141,6 +141,47 @@ def index_4D(a: torch.tensor, index: torch.tensor):
 
     index will select values/vectors
 
+    link_label_score
+    [
+        [
+            [
+                [score10 ,..., scoren0], <- probability that its linked itself
+                ...
+                [score1n ,..., scorenn] <- probability that its linked to unit at index n
+            ]
+
+        ]
+    ]
+
+
+
+    link_scores
+    [
+        [
+            [
+                score1,
+                scorenn
+            ]
+        ]
+    ]
+
+
+    argmax(
+            [
+                [
+                    [
+                        score1,
+                        scorenn
+                    ]
+                ]
+            ])
+
+
+        [
+            [
+                2
+            ]
+        ]
     """
     b = torch.zeros((a.shape[0], a.shape[1], a.shape[-1]))
     for i in range(index.shape[0]):
@@ -150,15 +191,18 @@ def index_4D(a: torch.tensor, index: torch.tensor):
 
 
 def get_all_possible_pairs(
-        span_lengths: List[List[int]],
-        none_unit_mask: List[List[int]],
-        assertion: bool = False) -> DefaultDict[str, List[List[Tuple[int]]]]:
+                            span_lengths: List[List[int]],
+                            none_unit_mask: List[List[int]],
+                            assertion: bool = False
+                            ) -> DefaultDict[str, List[List[Tuple[int]]]]:
 
     all_possible_pairs = defaultdict(list)
     for span, mask in zip(span_lengths, none_unit_mask):
         idx_abs = np.cumsum(span)
         idx_start = idx_abs[:-1][np.array(mask, dtype=bool)[1:]]
         idx_end = idx_abs[1:][np.array(mask, dtype=bool)[1:]]
+
+        all_possible_pairs["idx"].append(list(product(list(range(len(idx_start))), repeat=2)))
         all_possible_pairs["start"].append(list(product(idx_start, repeat=2)))
         all_possible_pairs["end"].append(list(product(idx_end, repeat=2)))
         if assertion:
@@ -166,6 +210,7 @@ def get_all_possible_pairs(
             span_len = np.array(span)[np.array(mask, dtype=bool)]
             assert np.all(lens_cal == span_len)
 
+    #print(len(all_possible_pairs["i"][0]), len(all_possible_pairs["start"][0]))
     return all_possible_pairs
 
 
@@ -192,6 +237,8 @@ def range_3d_tensor_index(matrix: Tensor,
     assert shape_ == 3, f"Wrong matrix shape, provided {shape_}, expected 3."
 
     # change matrix to be 2d matrix (dim0*dim1, dim2)
+    # (batch_size, nr_tokens, word_emb)
+    # (batch_size*nr_tokens, word_emb)
     mat = matrix.clone().contiguous().view(-1, matrix.size(-1))
 
     # construct array of indices for dimesion 0, repeating batch_id
@@ -206,13 +253,16 @@ def range_3d_tensor_index(matrix: Tensor,
     # converted 2d tensor
     idx_0_2d = np.ravel_multi_index(np.array([idx_0, idx_1]), new_size)
 
+    # matrix = [[i,j],[i,j]]
+
     # index 2d tensor using idx_0_2d
     mat = torch.split(mat[idx_0_2d, :], span_len.tolist())
     if reduce_ == "mean":
         mat = torch.stack(list(map(torch.mean, mat, repeat(0))))
     elif reduce_ == "sum":
         mat = torch.stack(list(map(torch.sum, mat, repeat(0))))
-
+    
+    #(batch_size, max_units, dim)
     return mat
 
 

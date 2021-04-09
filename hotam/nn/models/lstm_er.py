@@ -10,7 +10,7 @@ import torch.nn as nn
 from hotam.nn.layers.seg_layers.bigram_seg import BigramSegLayer
 from hotam.nn.layers.link_label_layers.dep_pairing_layer import DepPairingLayer
 from hotam.nn.layers.lstm import LSTM_LAYER
-from hotam.nn.utils import get_all_possible_pairs, range_3d_tensor_index
+from hotam.nn.utils import get_all_possible_pairs, range_3d_tensor_index, agg_emb
 from hotam.nn.utils import util_one_hot
 from hotam.nn.schedule_sample import ScheduleSampling
 from hotam.nn.bio_decoder import bio_decode
@@ -88,8 +88,7 @@ class LSTM_ER(nn.Module):
             dropout=dropout)
 
         self.loss_fn = hyperparamaters["loss_fn"].lower()
-        self.mse_loss = nn.MSELoss(reduction="mean")
-        self.nll_loss = nn.NLLLoss(reduction="none", ignore_index=-1)
+        self.nll_loss = nn.NLLLoss(reduction="mean", ignore_index=-1)
 
     @classmethod
     def name(self):
@@ -134,13 +133,13 @@ class LSTM_ER(nn.Module):
         for (i, label) in enumerate(output.label_encoders["seg+label"].labels):
             bio_dict[label[0]].append(i)
         span_lengths, none_unit_mask, nr_units = bio_decode(
-            batch_encoded_bios=preds_used,
-            lengths=batch["token"]["lengths"],
-            apply_correction=True,
-            B=bio_dict["B"],  # ids for labels counted as B
-            I=bio_dict["I"],  # ids for labels counted as I
-            O=bio_dict["O"],  # ids for labels counted as O
-        )
+                                                            batch_encoded_bios=preds_used,
+                                                            lengths=batch["token"]["lengths"],
+                                                            apply_correction=True,
+                                                            B=bio_dict["B"],  # ids for labels counted as B
+                                                            I=bio_dict["I"],  # ids for labels counted as I
+                                                            O=bio_dict["O"],  # ids for labels counted as O
+                                                            )
 
         # 6)
         all_possible_pairs = get_all_possible_pairs(span_lengths,
@@ -152,92 +151,94 @@ class LSTM_ER(nn.Module):
             pair_num_calc = [n * n for n in nr_units]
             assert np.all(np.array(pair_num) == np.array(pair_num_calc))
 
-        # 7)
-        node_embs = torch.cat(
-            (lstm_out, embs_used, batch['token']['deprel_embs']), dim=-1)
-        # construct Si: average of sequential lstm hidden state for each unit
-        # 1. Get start and end ids for each unit in two separate lists.
-        # reduce(iconcat): flatten List[List[Tuple[int]]] to List[Tuple[int]]
-        # list(zip*) separate the list of tuples candidate pairs into two lists
-        units_start_ids = reduce(iconcat, all_possible_pairs["start"], [])
-        units_end_ids = reduce(iconcat, all_possible_pairs["end"], [])
-        unit1_start, unit2_start = np.array(list(zip(*units_start_ids)))
-        unit1_end, unit2_end = np.array(list(zip(*units_end_ids)))
+        # 7) (batch_size, nr_tokens, feature_dim)
+        node_embs = torch.cat((lstm_out, embs_used, batch['token']['deprel_embs']), dim=-1)
+        
+        # # construct Si: average of sequential lstm hidden state for each unit
+        # # 1. Get start and end ids for each unit in two separate lists.
+        # # reduce(iconcat): flatten List[List[Tuple[int]]] to List[Tuple[int]]
+        # # list(zip*) separate the list of tuples candidate pairs into two lists
+        # units_start_ids = reduce(iconcat, all_possible_pairs["start"], [])
+        # units_end_ids = reduce(iconcat, all_possible_pairs["end"], [])
+        # unit1_start, unit2_start = np.array(list(zip(*units_start_ids)))
+        # unit1_end, unit2_end = np.array(list(zip(*units_end_ids)))
 
-        # Indexing sequential lstm hidden state using two lists of
-        # start and end ids of each unit
-        unit1_s = range_3d_tensor_index(lstm_out,
-                                        unit1_start,
-                                        unit1_end,
-                                        pair_num,
-                                        reduce_="mean")
-        unit2_s = range_3d_tensor_index(lstm_out,
-                                        unit2_start,
-                                        unit2_end,
-                                        pair_num,
-                                        reduce_="mean")
-        s = torch.cat((unit1_s, unit2_s), dim=-1)
+
+        # # Indexing sequential lstm hidden state using two lists of
+        # # start and end ids of each unit
+        # unit1_s = range_3d_tensor_index(lstm_out,
+        #                                 unit1_start,
+        #                                 unit1_end,
+        #                                 pair_num,
+        #                                 reduce_="mean")
+        # unit2_s = range_3d_tensor_index(lstm_out,
+        #                                 unit2_start,
+        #                                 unit2_end,
+        #                                 pair_num,
+        #                                 reduce_="mean")
+
+        # # average_unit_emb_of_unitN = feature_dim
+        # # (all_pairs_in_batch,  average_unit_emb_of_unit1 + averge_unit_emb_of_unit2 )
+
+        # s = torch.cat((unit1_s, unit2_s), dim=-1)
+
+        # print("UNITS", s.shape)
 
         # 8)
-        link_label_data = self.link_label_clf(
-            input_embs=node_embs,
-            unit_repr=s,
-            unit_num=nr_units,
-            dependencies=batch["token"]["dephead"],
-            token_mask=tokens_mask,
-            roots=output.batch["token"]["root_idxs"],
-            pairs=all_possible_pairs,
-            mode="shortest_path",
-            assertion=check)
+        link_label_data = self.link_label_clf(                                                 
+                                                node_embs=node_embs,
+                                                token_embs=lstm_out,
+                                                dependencies=batch["token"]["dephead"],
+                                                token_mask=tokens_mask,
+                                                roots=output.batch["token"]["root_idxs"],
+                                                pairs=all_possible_pairs,
+                                                mode="shortest_path",
+                                                assertion=check
+                                            )
 
-        # 9
-        link_label_max_logits, link_label_preds, link_preds = link_label_data
+        # # 9
+        # link_label_max_logits, link_label_preds, link_preds = link_label_data
 
-        seg_label_truth = batch["token"]["seg+label"]
-        link_label_truth = batch["token"]["link_label"]
-        link_truth = batch["token"]["link"]
-        # negative link_label
-        # Wrong label prediction
-        seg_label_preds[~tokens_mask] = -1  # to avoid falses in below compare
-        label_preds_wrong = seg_label_preds != seg_label_truth
-        # wrong predictions' indices
-        idx_0, idx_1 = torch.nonzero(label_preds_wrong, as_tuple=True)
-        link_label_preds[idx_0, idx_1] = idx_1
+        # print(link_label_max_logits)
+        # print("LINK_LABEL OUTPUTS",link_label_max_logits.shape)
 
-        if self.train_mode:
-            if self.loss_fn == "mse_loss":
-                # mse does not have ignore_index
-                link_label_preds[~tokens_mask] = -1
-                label_loss = self.mse_loss(seg_label_preds.type(torch.float),
-                                           seg_label_truth.type(torch.float))
-                link_label_loss = self.mse_loss(
-                    link_label_preds.type(torch.float),
-                    link_label_truth.type(torch.float))
-            elif self.loss_fn == "nll_loss":
-                label_loss = self.nll_loss(
-                    seg_label_logits.view(-1, self.num_ac),
-                    seg_label_truth.view(-1))
-                link_label_loss = self.nll_loss(
-                    link_label_max_logits.view(-1, self.num_labels),
-                    link_label_truth.view(-1))
-                label_loss = label_loss.view(batch_size, -1).sum(1).mean()
-                link_label_loss = link_label_loss.view(batch_size,
-                                                       -1).sum(1).mean()
+        # seg_label_truth = batch["token"]["seg+label"]
+        # link_label_truth = batch["token"]["link_label"]
+        # link_truth = batch["token"]["link"]
+        # # negative link_label
+        # # Wrong label prediction
+        # seg_label_preds[~tokens_mask] = -1  # to avoid falses in below compare
+        # label_preds_wrong = seg_label_preds != seg_label_truth
+        # # wrong predictions' indices
+        # idx_0, idx_1 = torch.nonzero(label_preds_wrong, as_tuple=True)
+        # link_label_preds[idx_0, idx_1] = idx_1
 
-            link_preds[~tokens_mask] = -1
-            label_loss = self.mse_loss(link_preds.type(torch.float),
-                                       link_truth.type(torch.float))
 
-            total_loss = label_loss + link_label_loss + label_loss
+        # # link_labels = [PRO-forward , PRO-backwards]
+        # if self.train_mode:
 
-            output.add_loss(task="total", data=total_loss)
-            output.add_loss(task="link_label", data=link_label_loss)
-            output.add_loss(task="label", data=label_loss)
+        #         self.nll_loss(link_label_max_logits, 
+        # #     label_loss = self.nll_loss(seg_label_logits.view(-1, self.num_ac), seg_label_truth.view(-1))
+        # #         link_label_loss = self.nll_loss(link_label_max_logits.view(-1, self.num_labels),link_label_truth.view(-1))
+        # #         # label_loss = label_loss.view(batch_size, -1).sum(1).mean()
+        # #         # link_label_loss = link_label_loss.view(batch_size,
+        # #         #                                        -1).sum(1).mean()
 
-        output.add_preds(task="seg+label", level="token", data=seg_label_preds)
-        output.add_preds(task="link", level="token", data=link_preds)
-        output.add_preds(task="link_label",
-                         level="token",
-                         data=link_label_preds)
+        # #     link_preds[~tokens_mask] = -1
+        
+        
+        # total_loss = (alpha *label_loss) + ((1-alpha) *link_label_loss) + link_loss
+
+        # #     output.add_loss(task="total", data=total_loss)
+        # #     output.add_loss(task="link_label", data=link_label_loss)
+        # #     output.add_loss(task="label", data=label_loss)
+
+        # # output.add_preds(task="seg+label", level="token", data=seg_label_preds)
+        # # output.add_preds(task="link", level="token", data=link_preds)
+        # # output.add_preds(task="link_label",
+        # #                  level="token",
+        # #                  data=link_label_preds)
+
+
 
         return output

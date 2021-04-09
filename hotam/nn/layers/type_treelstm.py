@@ -287,15 +287,13 @@ class TreeLSTMCell(nn.Module):
 
 class TypeTreeLSTM(nn.Module):
     def __init__(
-        self,
-        embedding_dim,
-        h_size,
-        dropout=0,
-        bidirectional=True,
-    ):
-
+                    self,
+                    embedding_dim,
+                    h_size,
+                    dropout=0,
+                    bidirectional=True,
+                ):
         super(TypeTreeLSTM, self).__init__()
-
         self.bidirectional = bidirectional
         self.TeeLSTM_cell = TreeLSTMCell(embedding_dim, h_size)
         # self.dropout = nn.Dropout(dropout)
@@ -319,31 +317,40 @@ class TypeTreeLSTM(nn.Module):
         g.ndata["h"] = h0
         g.ndata["c"] = c0
 
+
+        output = {
+                    "bu": None,
+                    "td": None
+                }
+
         # copy graph
         if self.bidirectional:
-            g_copy = g.clone()
+            g_td = g.clone()
 
         # propagate bottom top direction
         dgl.prop_nodes_topo(
-            g,
-            message_func=self.TeeLSTM_cell.message_func,
-            reduce_func=self.TeeLSTM_cell.reduce_func,
-            apply_node_func=self.TeeLSTM_cell.apply_node_func,
-        )
-        logits = g.ndata.pop("h")
+                                g,
+                                message_func=self.TeeLSTM_cell.message_func,
+                                reduce_func=self.TeeLSTM_cell.reduce_func,
+                                apply_node_func=self.TeeLSTM_cell.apply_node_func,
+                            )
+        output["bu"] = g
+        #logits = g.ndata.pop("h")
 
         if self.bidirectional:
             # propagate top bottom direction
             dgl.prop_nodes_topo(
-                g_copy,
-                message_func=self.TeeLSTM_cell.message_func,
-                reduce_func=self.TeeLSTM_cell.reduce_func,
-                apply_node_func=self.TeeLSTM_cell.apply_node_func,
-                reverse=True,
-            )
-            logits_tb = g_copy.ndata.pop("h")
-
+                                    g_td,
+                                    message_func=self.TeeLSTM_cell.message_func,
+                                    reduce_func=self.TeeLSTM_cell.reduce_func,
+                                    apply_node_func=self.TeeLSTM_cell.apply_node_func,
+                                    reverse=True,
+                                )
+            output["td"] = g_td
+            #logits_tb = g_copy.ndata.pop("h")
             # concatenate both tree directions
-            logits = torch.cat((logits, logits_tb), dim=-1)
+            #logits = torch.cat((logits, logits_tb), dim=-1)
 
-        return logits
+        return output
+
+

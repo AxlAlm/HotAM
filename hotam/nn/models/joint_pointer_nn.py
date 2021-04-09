@@ -186,7 +186,7 @@ class JointPN(nn.Module):
         
         unit_embs = agg_emb(batch["token"]["word_embs"], 
                             lengths = batch["unit"]["lengths"],
-                            span_indexes = batch["unit"]["span_idxs"], 
+                            span_indexes = batch["unit"]["span_idxs"],  #unit_index = [i,j]
                             mode = "mix"
                             )
         
