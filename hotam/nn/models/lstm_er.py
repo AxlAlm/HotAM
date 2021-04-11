@@ -55,40 +55,49 @@ class LSTM_ER(nn.Module):
         dropout = hyperparamaters["dropout"]
         self.dropout = nn.Dropout(dropout)
 
-        self.schedule = ScheduleSampling(schedule="inverse_sig",
-                                         k=hyperparamaters["k"])
+        self.schedule = ScheduleSampling(
+                                        schedule="inverse_sig",
+                                        k=hyperparamaters["k"]
+                                        )
 
-        self.lstm = LSTM_LAYER(input_size=token_embs_size,
-                               hidden_size=seq_lstm_h_size,
-                               num_layers=seq_lstm_num_layers,
-                               bidirectional=lstm_bidirectional,
-                               dropout=0.0)
+        self.lstm = LSTM_LAYER(
+                                input_size=token_embs_size,
+                                hidden_size=seq_lstm_h_size,
+                                num_layers=seq_lstm_num_layers,
+                                bidirectional=lstm_bidirectional,
+                                dropout=0.0
+                               )
 
         num_dirs = 2 if lstm_bidirectional else 1
         clf_input_size = label_embs_size + (seq_lstm_h_size * num_dirs)
         self.seg_label_clf = BigramSegLayer(
-            input_size=clf_input_size,
-            hidden_size=clf_h_size,
-            output_size=clf_output_size,
-            label_emb_dim=label_embs_size,
-            dropout=dropout,
-        )
+                                            input_size=clf_input_size,
+                                            hidden_size=clf_h_size,
+                                            output_size=clf_output_size,
+                                            label_emb_dim=label_embs_size,
+                                            dropout=dropout,
+                                        )
 
         nt = 3 if tree_bidirectional else 1
         ns = 2 if lstm_bidirectional else 1
         tree_input_size = seq_lstm_h_size * ns + dep_embs_size + label_embs_size
         link_label_input_size = tree_lstm_h_size * nt + 2 * seq_lstm_h_size * ns
         self.link_label_clf = DepPairingLayer(
-            tree_input_size=tree_input_size,
-            tree_lstm_h_size=tree_lstm_h_size,
-            tree_bidirectional=tree_bidirectional,
-            decoder_input_size=link_label_input_size,
-            decoder_h_size=link_label_clf_h_size,
-            decoder_output_size=self.num_labels,
-            dropout=dropout)
+                                                tree_input_size=tree_input_size,
+                                                tree_lstm_h_size=tree_lstm_h_size,
+                                                tree_bidirectional=tree_bidirectional,
+                                                decoder_input_size=link_label_input_size,
+                                                decoder_h_size=link_label_clf_h_size,
+                                                decoder_output_size=self.num_labels,
+                                                dropout=dropout
+                                                )
 
         self.loss_fn = hyperparamaters["loss_fn"].lower()
-        self.nll_loss = nn.NLLLoss(reduction="mean", ignore_index=-1)
+        self.nll_loss = nn.NLLLoss(
+                                    reduction="mean", 
+                                    ignore_index=-1
+                                    )
+
 
     @classmethod
     def name(self):
@@ -99,15 +108,21 @@ class LSTM_ER(nn.Module):
         check = True
         tokens_mask = batch["token"]["mask"].type(torch.bool)
         batch_size = batch["token"]["mask"].size(0)
+
         # 1)
         # pos_word_embs.shape =
         # (batch_size, max_nr_tokens, word_embs + pos_embs)
-        pos_word_embs = torch.cat(
-            (batch["token"]["word_embs"], batch["token"]["pos_embs"]), dim=2)
+        pos_word_embs = torch.cat((
+                                    batch["token"]["word_embs"], 
+                                    batch["token"]["pos_embs"]
+                                    ), 
+                                    dim=2)
         pos_word_embs = self.dropout(pos_word_embs)
 
         # 2) lstm_out = (batch_size, max_nr_tokens, lstm_hidden)
+
         lstm_out, _ = self.lstm(pos_word_embs, batch["token"]["lengths"])
+
 
         # 3)
         # seg_label_logits = (batch_size, max_nr_tokens, nr_labels)
@@ -132,57 +147,28 @@ class LSTM_ER(nn.Module):
         bio_dict = defaultdict(list)
         for (i, label) in enumerate(output.label_encoders["seg+label"].labels):
             bio_dict[label[0]].append(i)
-        span_lengths, none_unit_mask, nr_units = bio_decode(
-                                                            batch_encoded_bios=preds_used,
-                                                            lengths=batch["token"]["lengths"],
-                                                            apply_correction=True,
-                                                            B=bio_dict["B"],  # ids for labels counted as B
-                                                            I=bio_dict["I"],  # ids for labels counted as I
-                                                            O=bio_dict["O"],  # ids for labels counted as O
-                                                            )
+        
+        bio_data = bio_decode(
+                                batch_encoded_bios=preds_used,
+                                lengths=batch["token"]["lengths"],
+                                apply_correction=True,
+                                B=bio_dict["B"],  # ids for labels counted as B
+                                I=bio_dict["I"],  # ids for labels counted as I
+                                O=bio_dict["O"],  # ids for labels counted as O
+                                only_units = True,
+                                )
 
         # 6)
-        all_possible_pairs = get_all_possible_pairs(span_lengths,
-                                                    none_unit_mask,
-                                                    assertion=check)
-        # get number of pairs in each sample
-        pair_num = list(map(len, all_possible_pairs["end"]))
-        if check:
-            pair_num_calc = [n * n for n in nr_units]
-            assert np.all(np.array(pair_num) == np.array(pair_num_calc))
+        all_possible_pairs = get_all_possible_pairs(
+                                                    starts=bio_data["unit"]["start"],
+                                                    ends=bio_data["unit"]["end"],
+                                                    assertion=check
+                                                    )
+
+        print(len(all_possible_pairs["start"][0]),len(all_possible_pairs["end"][0]))
 
         # 7) (batch_size, nr_tokens, feature_dim)
         node_embs = torch.cat((lstm_out, embs_used, batch['token']['deprel_embs']), dim=-1)
-        
-        # # construct Si: average of sequential lstm hidden state for each unit
-        # # 1. Get start and end ids for each unit in two separate lists.
-        # # reduce(iconcat): flatten List[List[Tuple[int]]] to List[Tuple[int]]
-        # # list(zip*) separate the list of tuples candidate pairs into two lists
-        # units_start_ids = reduce(iconcat, all_possible_pairs["start"], [])
-        # units_end_ids = reduce(iconcat, all_possible_pairs["end"], [])
-        # unit1_start, unit2_start = np.array(list(zip(*units_start_ids)))
-        # unit1_end, unit2_end = np.array(list(zip(*units_end_ids)))
-
-
-        # # Indexing sequential lstm hidden state using two lists of
-        # # start and end ids of each unit
-        # unit1_s = range_3d_tensor_index(lstm_out,
-        #                                 unit1_start,
-        #                                 unit1_end,
-        #                                 pair_num,
-        #                                 reduce_="mean")
-        # unit2_s = range_3d_tensor_index(lstm_out,
-        #                                 unit2_start,
-        #                                 unit2_end,
-        #                                 pair_num,
-        #                                 reduce_="mean")
-
-        # # average_unit_emb_of_unitN = feature_dim
-        # # (all_pairs_in_batch,  average_unit_emb_of_unit1 + averge_unit_emb_of_unit2 )
-
-        # s = torch.cat((unit1_s, unit2_s), dim=-1)
-
-        # print("UNITS", s.shape)
 
         # 8)
         link_label_data = self.link_label_clf(                                                 
@@ -192,6 +178,8 @@ class LSTM_ER(nn.Module):
                                                 token_mask=tokens_mask,
                                                 roots=output.batch["token"]["root_idxs"],
                                                 pairs=all_possible_pairs,
+                                                unit_span_idxs=bio_data["unit"]["span_idxs"],
+                                                max_units=bio_data["max_units"],
                                                 mode="shortest_path",
                                                 assertion=check
                                             )

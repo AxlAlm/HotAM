@@ -191,26 +191,23 @@ def index_4D(a: torch.tensor, index: torch.tensor):
 
 
 def get_all_possible_pairs(
-                            span_lengths: List[List[int]],
-                            none_unit_mask: List[List[int]],
+                            starts: List[List[int]],
+                            ends: List[List[int]],
                             assertion: bool = False
                             ) -> DefaultDict[str, List[List[Tuple[int]]]]:
 
     all_possible_pairs = defaultdict(list)
-    for span, mask in zip(span_lengths, none_unit_mask):
-        idx_abs = np.cumsum(span)
-        idx_start = idx_abs[:-1][np.array(mask, dtype=bool)[1:]]
-        idx_end = idx_abs[1:][np.array(mask, dtype=bool)[1:]]
+    for idx_start, idx_end in zip(starts, ends):
 
         all_possible_pairs["idx"].append(list(product(list(range(len(idx_start))), repeat=2)))
         all_possible_pairs["start"].append(list(product(idx_start, repeat=2)))
         all_possible_pairs["end"].append(list(product(idx_end, repeat=2)))
-        if assertion:
-            lens_cal = idx_end - idx_start
-            span_len = np.array(span)[np.array(mask, dtype=bool)]
-            assert np.all(lens_cal == span_len)
 
-    #print(len(all_possible_pairs["i"][0]), len(all_possible_pairs["start"][0]))
+        # if assertion:
+        #     lens_cal = idx_end - idx_start
+        #     span_len = np.array(span)[np.array(mask, dtype=bool)]
+        #     assert np.all(lens_cal == span_len)
+
     return all_possible_pairs
 
 

@@ -200,6 +200,8 @@ import torch.nn as nn
 import dgl
 from dgl import DGLGraph
 
+from hotam.utils import timer
+
 
 class TreeLSTMCell(nn.Module):
     def __init__(self, xemb_size, h_size):
@@ -211,8 +213,13 @@ class TreeLSTMCell(nn.Module):
         self.W_f = nn.Linear(xemb_size, h_size, bias=False)
         self.U_f = nn.Linear(2 * h_size, 2 * h_size)
         self.b_f = nn.Parameter(torch.zeros(1, h_size))
+        self.C = 0
+
 
     def message_func(self, edges):
+        self.C += 1
+        print(self.C)
+
         return {
             "h": edges.src["h"],
             "c": edges.src["c"],
@@ -262,9 +269,11 @@ class TreeLSTMCell(nn.Module):
         f_tk = torch.sigmoid(X + f_cell + self.b_f)  # (Nt, Nchn, H)
         c_cell = torch.sum(f_tk * c_child, dim=1)  # (Nt, H)
 
+        print(c_cell.shape)
         return {"h": h_iou, "c": c_cell}
 
     def apply_node_func(self, nodes):
+
         # The leaf nodes have no child the h_child is initialized.
         h_cell = nodes.data["h"]
         c_cell = nodes.data["c"]
@@ -298,7 +307,9 @@ class TypeTreeLSTM(nn.Module):
         self.TeeLSTM_cell = TreeLSTMCell(embedding_dim, h_size)
         # self.dropout = nn.Dropout(dropout)
 
+
     def forward(self, g: DGLGraph, h0: Tensor, c0: Tensor):
+        self.TeeLSTM_cell.C = 0
         """A modified N-ary tree-lstm (LSTM-ER) network
         ----------
         g:      dgl.DGLGraph
@@ -329,11 +340,13 @@ class TypeTreeLSTM(nn.Module):
 
         # propagate bottom top direction
         dgl.prop_nodes_topo(
-                                g,
-                                message_func=self.TeeLSTM_cell.message_func,
-                                reduce_func=self.TeeLSTM_cell.reduce_func,
-                                apply_node_func=self.TeeLSTM_cell.apply_node_func,
-                            )
+                                        g,
+                                        message_func=self.TeeLSTM_cell.message_func,
+                                        reduce_func=self.TeeLSTM_cell.reduce_func,
+                                        apply_node_func=self.TeeLSTM_cell.apply_node_func,
+                                    )
+
+
         output["bu"] = g
         #logits = g.ndata.pop("h")
 

@@ -16,6 +16,7 @@ from dgl.traversal import topological_nodes_generator as traverse_topo
 from hotam.nn.layers.type_treelstm import TypeTreeLSTM
 from hotam.nn.utils import index_4D, unfold_matrix
 
+from time import time
 
 class DepPairingLayer(nn.Module):
     def __init__(self,
@@ -59,6 +60,7 @@ class DepPairingLayer(nn.Module):
             raise Exception(error_msg_1 + error_msg_2)
             # remove the sample that has the problem
 
+
     def get_sample_graph(self, deplinks: Tensor, roots: Tensor,
                          token_mask: Tensor, assertion: bool) -> List[Tensor]:
 
@@ -80,6 +82,7 @@ class DepPairingLayer(nn.Module):
         M = M[~self_loop].view(batch_size, -1).to(device)
 
         return [U, V, M]
+
 
     def get_subgraph(self,
                      start: int,
@@ -124,6 +127,7 @@ class DepPairingLayer(nn.Module):
             pass
         return sub_g
 
+
     def build_dep_graphs(self, 
                         node_embs: Tensor, 
                         deplinks: Tensor,
@@ -145,6 +149,7 @@ class DepPairingLayer(nn.Module):
         dep_graphs = []
         nodes_emb = []
         for b_i in range(batch_size):
+            print(b_i)
             mask = M[b_i]
             u = U[b_i][mask]
             v = V[b_i][mask]
@@ -162,15 +167,45 @@ class DepPairingLayer(nn.Module):
                                               g_nx=graph_unidir,
                                               sub_graph_type=mode,
                                               assertion=assertion)
-            dep_graphs.append(dgl.batch(list(map(subgraph_func, start, end))))
-            # get nodes' token embedding
-            nodes_emb.append(node_embs[b_i, dep_graphs[b_i].ndata["_ID"]])
+            
 
-        # batch graphs, move to model device, update nodes data by tokens
-        # embedding
-        nodes_emb = torch.cat(nodes_emb, dim=0)
-        dep_graphs = dgl.batch(dep_graphs).to(self.device)
-        dep_graphs.ndata["emb"] = nodes_emb
+            G = dgl.batch(list(map(subgraph_func, start, end)))
+            G.ndata["emb"] = node_embs[b_i, G.ndata["_ID"]]
+
+            h0 = torch.zeros(
+                            G.num_nodes(),
+                            self.tree_lstm_h_size,
+                            device=self.device
+                            )
+            c0 = torch.zeros_like(h0)
+            self.tree_lstm(G, h0, c0)
+            
+        #     # 2D tensor representing the nodes in the trees for a give mode.
+        #     # e.g. if mode == "shortest path" 
+        #     # the shape == ( (all nodes in all possible pairs over all batches, lstm_dim*nr_directions) )
+        #     # tree_lstm_out[i] = node in the shortest of some pair.
+
+        #     start = time()
+        #     graphs = self.tree_lstm(dep_graphs, h0, c0)
+            
+        #     #dep_graphs.append(dgl.batch(list(map(subgraph_func, start, end))))
+        #     b = dgl.batch(list(map(subgraph_func, start, end)))
+        #     #print(list(map(subgraph_func, start, end)))
+        #     #print(dep_graphs[b_i].ndata["_ID"])
+        #     # get nodes' token embedding
+        #     #print(node_embs[b_i, b.ndata["_ID"]].shape)
+        #     dep_graphs.extend(list(map(subgraph_func, start, end)))
+        #     #nodes_emb.extend(node_embs[b_i, b.ndata["_ID"]])
+        #     nodes_emb.append(node_embs[b_i, dep_graphs[b_i].ndata["_ID"]])
+
+        # print(nodes_emb[0].shape)
+        # #nodes_emb = torch.tensor(nodes_emb)
+        # # batch graphs, move to model device, update nodes data by tokens
+        # # embedding
+        # #nodes_emb = torch.cat(nodes_emb, dim=0)
+        # dep_graphs = dgl.batch(dep_graphs).to(self.device)
+        # print(len(dep_graphs), len(nodes_emb))
+        # dep_graphs.ndata["emb"] = torch.zeros((109264,261))
         
         # unbatching = (batch_size, max_nr_units, max_nr_units, max_tokens)
         #
@@ -184,16 +219,22 @@ class DepPairingLayer(nn.Module):
 
         return dep_graphs
 
-    
 
-    def graph_unbatch(self, graphs, token_embs, all_possible_pairs, unit_span_indexes, tree_lstm_hidden_size):
+    def __unpack_graph( self, 
+                            batch_size:int,
+                            max_units:int,
+                            graph_node_dim:int,
+                            graphs:dict, 
+                            token_embs:Tensor, 
+                            all_possible_pairs:list, 
+                            unit_span_idxs:list, 
+                            ):
         """
 
 
         """
         #unit_embs = (batch_size, max_units, embs_size)
         #word_embs = (batch_size, max_tokens, emb_size)
-
         #pair_rep = HpA;hp<;hp> + S
         # big_boi[1][1] = all_possible_links
         # big_boi[1][1][0] = represenation of linking to itself.
@@ -201,13 +242,13 @@ class DepPairingLayer(nn.Module):
         # clf(big_boi) = logits
         # logits[1][1][0] = probability of unit 1 in sample 1 beeing linked to 0
 
-        pair_rep_size = (tree_lstm_hidden_size*3) * token_embs.shape[-1]
-        max_units = 10
-        batch_size = 32
+        pair_rep_size = (graph_node_dim*3) + (token_embs.shape[-1]*2)
         batch_outs = torch.zeros((batch_size, max_units, max_units, pair_rep_size)) 
 
         bu_gs = dgl.unbatch(graphs["bu"])
         td_gs = dgl.unbatch(graphs["td"])
+        print("HELLO", bu_gs[0])
+        print(lol)
 
         # all_possible_pairs["idx"] is all possible units idx pairs.
         # all_possible_pairs["start"] (or "end") will give you pairs of token indexes insteado unit indexes
@@ -219,37 +260,44 @@ class DepPairingLayer(nn.Module):
         for i in range(batch_size):
             bu_g = dgl.unbatch(bu_gs[i])
             td_g = dgl.unbatch(td_gs[i])
+
+            print(len(td_g), td_g)
  
-            for j,(j_bu_g, j_td_g) in enumerate(zip(td_g, bu_g)):
-            
+            for j,(j_bu_g, j_td_g) in enumerate(zip(bu_g, td_g)):
+                
                 u1_i, u2_i = all_possible_pairs["idx"][i][j]
+
+                #print(u1_i, u2_i)
 
                 # get [↑hpA; ↓hp1; ↓hp2 ]
                 root_id = (j_bu_g.ndata["root"] == 1)
                 start_id = j_bu_g.ndata["start"] == 1
                 end_id = j_bu_g.ndata["end"] == 1    
-                HpA = j_bu_g.ndata["h"][root_id] 
-                Hp1_td = j_td_g.ndata["h"][start_id]
-                Hp2_td = j_td_g.ndata["h"][end_id]
+                HpA = j_bu_g.ndata["h"][root_id][0] 
+                Hp1_td = j_td_g.ndata["h"][start_id][0]
+                Hp2_td = j_td_g.ndata["h"][end_id][0]
 
                 # create s, the average embeddings for each units
-                ii_1, jj_1  = unit_span_indexes[i][u1_i]
-                ii_2, jj_2  = unit_span_indexes[i][u1_2]
-                avrg_emb_unit1 = torch.mean(token_embs[i][ii_1:jj_1], dim=-1)
-                avrg_emb_unit2 = torch.mean(token_embs[i][ii_2:jj_2], dim=-1)
+                ii_1, jj_1  = unit_span_idxs[i][u1_i]
+                ii_2, jj_2  = unit_span_idxs[i][u1_i]
+
+                avrg_emb_unit1 = torch.mean(token_embs[i][ii_1:jj_1], dim=0)
+                avrg_emb_unit2 = torch.mean(token_embs[i][ii_2:jj_2], dim=0)
 
                 # create the concatenation of the above representations
                 # dp´ = [↑hpA; ↓hp1; ↓hp2 ; s]
-                batch_outs[i][u1_i][u2_i] = torch.cat((
-                                                            HpA, 
-                                                            Hp1_td, 
-                                                            Hp2_td,
-                                                            avrg_emb_unit1,
-                                                            avrg_emb_unit2,
-                                                            ),
-                                                            dim=-1
-                                                            )
-        
+                dp = torch.cat((
+                                HpA, 
+                                Hp1_td, 
+                                Hp2_td,
+                                avrg_emb_unit1,
+                                avrg_emb_unit2,
+                                ),
+                                dim=0
+                                )
+                #print(dp.shape)
+                batch_outs[i][u1_i][u2_i] = dp
+
         return batch_outs
 
 
@@ -260,6 +308,8 @@ class DepPairingLayer(nn.Module):
                 token_mask: Tensor,
                 roots: Tensor,
                 pairs: DefaultDict[str, List[List[Tuple[int]]]],
+                unit_span_idxs: List[Tuple[int,int]],
+                max_units:int,
                 mode: str = "shortest_path",
                 assertion: bool = False
                 ):
@@ -272,7 +322,7 @@ class DepPairingLayer(nn.Module):
         batch_size = node_embs.size(0)
 
         # 8)
-        print("graph_start")
+        start = time()
         dep_graphs = self.build_dep_graphs(
                                             node_embs=node_embs,
                                             deplinks=dependencies,
@@ -282,7 +332,10 @@ class DepPairingLayer(nn.Module):
                                             mode=mode,
                                             assertion=assertion
                                            )
-        print("graph done")
+        end = time()
+        print("build graph time", end-start)
+
+
 
         # 9)
         h0 = torch.zeros(
@@ -297,10 +350,25 @@ class DepPairingLayer(nn.Module):
         # the shape == ( (all nodes in all possible pairs over all batches, lstm_dim*nr_directions) )
         # tree_lstm_out[i] = node in the shortest of some pair.
 
+        start = time()
         graphs = self.tree_lstm(dep_graphs, h0, c0)
-        pair_matrix = self.graph_unbatch(graphs, token_embs, pairs, [], h0.shape[-1])
+        end = time()
+        print("tree lstm time", end-start)
 
-        print(pair_matrix)
+        start = time()
+        pair_matrix = self.__unpack_graph(
+                                            batch_size=batch_size,
+                                            max_units=max_units,
+                                            graph_node_dim=h0.shape[-1],
+                                            graphs=graphs, 
+                                            token_embs=token_embs, 
+                                            all_possible_pairs=pairs, 
+                                            unit_span_idxs=unit_span_idxs, 
+                                            )
+        end = time()
+        print("unpack graphs time", end-start)
+
+        #print(pair_matrix)
 
         # # construct dp = [↑hpA; ↓hp1; ↓hp2]
         # # ↑hpA: hidden state of dep_graphs' root

@@ -337,13 +337,13 @@ class ModelOutput:
 
 
         if task == "seg":
-            lengths_tok, none_span_mask, lengths = bio_decode(
+            bio_out = bio_decode(
                                                                 batch_encoded_bios=decoded_preds,
                                                                 lengths=ensure_numpy(self.batch[level]["lengths"]),
                                                             )
-            self.pred_spans["lengths_tok"] = lengths_tok
-            self.pred_spans["none_span_mask"] = none_span_mask
-            self.pred_spans["lengths"]  = lengths
+            self.pred_spans["lengths_tok"] = bio_out["span"]["lengths"]
+            self.pred_spans["none_span_mask"] = bio_out["span"]["none_span_masks"]
+            self.pred_spans["lengths"] = len(bio_out["units"]["lengths"])
         
 
         if task not in self.outputs:
