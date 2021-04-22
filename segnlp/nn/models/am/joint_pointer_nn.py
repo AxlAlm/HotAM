@@ -10,45 +10,6 @@ from segnlp.nn.layers.link_layers import Pointer
 from segnlp.nn.utils import agg_emb
 
 
-class Encoder(nn.Module):
-
-    def __init__(   
-                    self,  
-                    input_size:int, 
-                    hidden_size:int, 
-                    num_layers:int, 
-                    bidirectional:int,
-                    dropout:float=None,
-                    ):
-        super().__init__()
-        self.input_layer = nn.Linear(input_size, input_size)
-
-
-        self.lstm =  LSTM(  
-                                input_size=input_size,
-                                hidden_size=hidden_size,
-                                num_layers=num_layers,
-                                bidirectional=bidirectional,
-                                )
-        
-        self.use_dropout = False
-        if dropout:
-            self.dropout = nn.Dropout(dropout)
-            self.use_dropout = True
-
-
-    def forward(self, X, lengths):
-
-        dense_out = torch.sigmoid(self.input_layer(X))
-        out, hidden = self.lstm(dense_out, lengths)
-
-        if self.use_dropout:
-            out = self.dropout(out)
-
-        return out, hidden
-
-
-
 class JointPN(nn.Module):
 
     """
@@ -175,63 +136,49 @@ class JointPN(nn.Module):
         self.loss = nn.CrossEntropyLoss(reduction="sum", ignore_index=-1)
 
 
+        self.label_clf =  SimpleCLF()
+
     @classmethod
     def name(self):
         return "JointPN"
 
 
     def forward(self, batch, output):
-        
-        unit_embs = agg_emb(batch["token"]["word_embs"], 
+
+        # seg_layer seg_layer(
+        #                     batch["token"]["word_embs"],
+        #                     mask=batch["token"]["mask"]
+        #                     )
+        # seg_layer
+        # bio_data = bio_decode()
+        #
+        #
+
+        unit_embs = agg_emb(
+                            batch["token"]["word_embs"], 
                             lengths = batch["unit"]["lengths"],
                             span_indexes = batch["unit"]["span_idxs"], 
                             mode = "mix"
                             )
-        
+
         X = torch.cat((unit_embs, batch["unit"]["doc_embs"]), dim=-1)
-        
-        if self.use_feature_dropout:
-            X = self.feature_dropout(X)
-    
-        # 1-2 | Encoder
-        # encoder_output = (BATCH_SIZE, SEQ_LEN, HIDDEN_DIM*LAYER*DIRECTION)
-        encoder_out, (encoder_h_s, encoder_c_s) = self.encoder(X, batch["unit"]["lengths"])
 
-        # 3-7 | Decoder
-        # We get the last hidden cell states and timesteps and concatenate them for each directions
-        # from (NUM_LAYER*DIRECTIONS, BATCH_SIZE, HIDDEN_SIZE) -> (BATCH_SIZE, HIDDEN_SIZE*NR_DIRECTIONS)
-        layer_dir_idx = list(range(0,encoder_h_s.shape[0],2))
-        encoder_h_s = torch.cat([*encoder_h_s[layer_dir_idx]],dim=1)
-        encoder_c_s = torch.cat([*encoder_c_s[layer_dir_idx]],dim=1)
-
-        # OUTPUT: (BATCH_SIZE, SEQ_LEN, SEQ_LEN)
-        link_logits = self.decoder(
+        encoder_out = self.encoder(X, batch["unit"]["lengths"])
+        link_output = self.decoder(
                                     encoder_out, 
-                                    encoder_h_s, 
-                                    encoder_c_s, 
                                     batch["unit"]["mask"], 
-                                    return_softmax=False
                                     )
-
-        # OUTPUT: (BATCH_SIZE, SEQ_LEN, nr_labels)
-        label_logits =  self.label_clf(encoder_out)
+        label_outputs =  self.label_clf(encoder_out[0])
 
         if not self.inference:
-            link_loss = self.loss(torch.flatten(link_logits, end_dim=-2), batch["unit"]["link"].view(-1))
-            label_loss = self.loss(torch.flatten(label_logits, end_dim=-2), batch["unit"]["label"].view(-1))
-            
-            total_loss = ((1-self.TASK_WEIGHT) * link_loss) + ((1-self.TASK_WEIGHT) * label_loss)
+            total_loss = ((1-self.TASK_WEIGHT) * link_output["loss"]) + ((1-self.TASK_WEIGHT) * label_outputs["loss"])
 
             output.add_loss(task="total",       data=total_loss)
-            output.add_loss(task="link",        data=link_loss)
-            output.add_loss(task="label",       data=label_loss)
+            output.add_loss(task="link",        data=link_output["loss"])
+            output.add_loss(task="label",       data=label_outputs["loss"])
 
-
-        label_preds = torch.argmax(link_logits,  dim=-1)
-        link_preds = torch.argmax(label_logits, dim=-1)
-
-        output.add_preds(task="label",          level="unit", data=label_preds)
-        output.add_preds(task="link",           level="unit", data=link_preds)
+        output.add_preds(task="label",          level="unit", data=label_outputs["preds"])
+        output.add_preds(task="link",           level="unit", data=link_output["preds"])
 
         return output
 

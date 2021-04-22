@@ -27,7 +27,6 @@ logger = get_logger("BOW")
 # https://ota.bodleian.ox.ac.uk/repository/xmlui/bitstream/handle/20.500.12024/2554/2554.zip?sequence=3&isAllowed=y
 
 
-
 def space_tok(string):
     return string.split(" ")
 
@@ -93,7 +92,6 @@ class BOW(FeatureModel):
             if train_svd:
                 self._svd = self.__train_svd(corpus_data, tfidf=self._tfidf, dump_path=path_to_svd_m)
 
-    
     
     def __get_corpus_data(self, corpus):
 
