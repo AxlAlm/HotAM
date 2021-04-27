@@ -66,17 +66,17 @@ class LSTM_CRF(nn.Module):
             targets[targets == -1] = 0
 
             loss = -self.crf(    
-                        emissions=out, #score for each tag, (batch_size, seq_length, num_tags) as we have batch first
-                        tags=targets,
-                        mask=mask,
-                        reduction=self.loss_redu
-                        )
+                            emissions=out, #score for each tag, (batch_size, seq_length, num_tags) as we have batch first
+                            tags=targets,
+                            mask=mask,
+                            reduction=self.loss_redu
+                            )
 
         #returns preds with no padding (padding values removed)
         preds = self.crf.decode( 
-                            emissions=out, 
-                            mask=mask
-                            )
+                                emissions=out, 
+                                mask=mask
+                                )
         preds = torch.tensor(zero_pad(preds))
 
         return {

@@ -1,6 +1,8 @@
 
 
 import numpy as np
+
+from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
@@ -44,6 +46,7 @@ class Pointer(nn.Module):
                 output_size:int, 
                 hidden_size:int=256, 
                 dropout:float=0.0, 
+                loss_redu:str="sum"
                 ):
         super().__init__()
 
@@ -55,39 +58,46 @@ class Pointer(nn.Module):
                                         )
     
         self.dropout = nn.Dropout(dropout)
+
+        self.loss = TokenCrossEntropyLoss(reduction=loss_redu, ignore_index=-1)
         
 
     def forward(self, 
-                encoder_outputs:torch.tensor, 
-                mask:torch.tensor,
+                input : Tensor,
+                bio_data: dict,
+                batch: ModelInput
+                # encoder_outputs:torch.tensor, 
+                # mask:torch.tensor,
+                # targets:torch.tensor=None,
+                # unit_tok_lengths:torch.tensor=None
                 ):
 
-        if isinstance(encoder_outputs, tuple):
+        if isinstance(input, tuple):
 
-            encoder_outputs, (encoder_h_s, encoder_c_s) = encoder_outputs
-            device = encoder_outputs.device
+            input, (h_s, c_s) = input
+            device = input.device
 
-            seq_len = encoder_outputs.shape[1]
-            batch_size = encoder_outputs.shape[0]
+            seq_len = input.shape[1]
+            batch_size = input.shape[0]
 
             # We get the last hidden cell states and timesteps and concatenate them for each directions
             # from (NUM_LAYER*DIRECTIONS, BATCH_SIZE, HIDDEN_SIZE) -> (BATCH_SIZE, HIDDEN_SIZE*NR_DIRECTIONS)
             # The cell state and last hidden state is used to start the decoder (first states and hidden of the decoder)
             # -2 will pick the last layer forward and -1 will pick the last layer backwards
-            h_s = torch.cat((encoder_h_s[-2],encoder_h_s[-1]),dim=1)
-            c_s = torch.cat((encoder_h_s[-2],encoder_h_s[-1]),dim=1)
+            h_s = torch.cat((h_s[-2], h_s[-1]),dim=1)
+            c_s = torch.cat((h_s[-2], h_s[-1]),dim=1)
             
         else:
-            seq_len = encoder_outputs.shape[1]
-            batch_size = encoder_outputs.shape[0]
-            device = encoder_outputs.device
+            seq_len = input.shape[1]
+            batch_size = input.shape[0]
+            device = input.device
 
             h_s = torch.rand((batch_size, self._hidden_size), device=device)
             c_s = torch.rand((batch_size, self._hidden_size), device=device)
      
 
         decoder_input = torch.zeros(h_s.shape, device=device)
-        logits = torch.zeros(batch_size, seq_len, seq_len, device=device)
+        output = torch.zeros(batch_size, seq_len, seq_len, device=device)
         for i in range(seq_len):
             
             decoder_input = torch.sigmoid(self.input_layer(decoder_input))
@@ -95,13 +105,21 @@ class Pointer(nn.Module):
 
             h_s, c_s = self.lstm_cell(decoder_input, (h_s, c_s))
 
-            logits[:, i] = self.attention(h_s, encoder_outputs, mask, return_softmax=False)
+            output[:, i] = self.attention(h_s, input, mask, return_softmax=False)
         
-        preds = torch.argmax(logits, dim=-1)
+        
+        loss = None
+        if targets is not None:
+            loss = self.loss(
+                            unit_inputs=outputs, 
+                            unit_mask=mask,
+                            unit_tok_lengths=unit_tok_lengths,
+                            targets=targets,
+                            )
+
+        preds = torch.argmax(output, dim=-1)
 
         return {
-                "logits": logits,
+                "loss": loss,
                 "preds":preds,
-                "level": unit
                 }
-
