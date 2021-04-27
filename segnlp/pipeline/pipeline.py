@@ -17,6 +17,7 @@ from scipy import stats
 #pytorch Lightning
 from pytorch_lightning.loggers import LightningLoggerBase
 from pytorch_lightning.loggers import CometLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 
 #deepsig
@@ -37,7 +38,7 @@ from segnlp.utils import get_time
 from segnlp.utils import create_uid
 from segnlp.utils import random_ints
 from segnlp.utils import ensure_numpy
-from segnlp.evaluation_methods import get_evaluation_method
+from segnlp.pipeline.evaluation import Evaluation
 from segnlp.features import get_feature
 from segnlp.nn.utils import ModelOutput
 from segnlp.visuals.hp_tune_progress import HpProgress
@@ -47,7 +48,7 @@ user_dir = pwd.getpwuid(os.getuid()).pw_dir
 
 
 
-class Pipeline:
+class Pipeline(Evaluation):
     
     def __init__(self,
                 project:str,
@@ -222,12 +223,10 @@ class Pipeline:
 
 
     def __get_model_args(self,
-                        model:torch.nn.Module, 
                         hyperparamaters:dict,
                         ):
 
         model_args = dict(
-                        model=model, 
                         hyperparamaters=hyperparamaters,
                         tasks=self.config["tasks"],
                         all_tasks=self.config["all_tasks"],
@@ -249,7 +248,6 @@ class Pipeline:
         #dumping the arguments
         model_args_c = deepcopy(model_args)
         model_args_c.pop("label_encoders")
-        model_args_c["model"] = model_args_c["model"].name()
 
         time = get_time()
         config = {
@@ -518,6 +516,8 @@ class Pipeline:
                 model_id:str=None
                 ):
 
+        self.save_choice = save_choice
+
         if model_id is None:
             model_id = create_uid("".join(list(map(str, hyperparamaters.keys()))+ list(map(str, hyperparamaters.values()))))
 
@@ -543,7 +543,6 @@ class Pipeline:
         os.makedirs(exp_model_path, exist_ok=True) 
 
         model_args = self.__get_model_args(
-                                            model=model, 
                                             hyperparamaters=hyperparamaters, 
                                             )
 
@@ -564,7 +563,7 @@ class Pipeline:
                 self.exp_logger.experiment.log_others(exp_config)
 
 
-        trainer = setup_ptl_trainer( 
+        self.trainer = setup_ptl_trainer( 
                                                     ptl_trn_args=ptl_trn_args,
                                                     hyperparamaters=hyperparamaters, 
                                                     exp_model_path=exp_model_path,
@@ -572,13 +571,14 @@ class Pipeline:
                                                     #prefix=model_id,
                                                     )
 
-        model_fp, model_score = get_evaluation_method(self.evaluation_method)(
-                                                                                model_args = model_args,
-                                                                                trainer = trainer,
-                                                                                dataset = self.dataset,
-                                                                                save_choice=save_choice,
-                                                                                )
-
+        if self.evaluation_method == "cross_validation":
+            model_fp, model_score = self._cv_eval(
+                                                    model_args = model_args,
+                                                    )
+        else:
+            model_fp, model_score = self._normal_eval(
+                                                        model_args = model_args,
+                                                        )
         return {
                 "model_id":model_id, 
                 "score":model_score, 
@@ -613,6 +613,7 @@ class Pipeline:
         seed_scores = []
         seeds = []
 
+
         for seed_model in model_info["outputs"]:
             seeds.append(seed_model["random_seed"])
             with open(seed_model["config_path"], "r") as f:
@@ -628,9 +629,9 @@ class Pipeline:
                                         save_choice=None, 
                                         )
 
-            model_config["args"]["model"] = deepcopy(self.model)
+            model = deepcopy(self.model)
             model_config["args"]["label_encoders"] = self.__pp_encoders
-            model = PTLBase.load_from_checkpoint(seed_model["path"], **model_config["args"])
+            model = model.load_from_checkpoint(seed_model["path"], **model_config["args"])
             scores = trainer.test(
                                     model=model, 
                                     test_dataloaders=self.dataset.test_dataloader(),

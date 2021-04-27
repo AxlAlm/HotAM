@@ -61,7 +61,6 @@ class PTLBase(ptl.LightningModule):
 
 
     def __init__(   self,  
-                    model:torch.nn.Module, 
                     hyperparamaters:dict,
                     tasks:list,
                     all_tasks:list,
@@ -72,21 +71,27 @@ class PTLBase(ptl.LightningModule):
                     inference:bool=False
                     ):
         super().__init__()
-        self.hyperparamaters = hyperparamaters
+        self.hps = hyperparamaters
         self.monitor_metric = hyperparamaters.get("monitor_metric", "loss")
+        self.feature_dims = feature_dims
+        self.task_dims = task_dims
         self.prediction_level = prediction_level
         self.tasks = tasks
         self.all_tasks = all_tasks
         self.label_encoders = label_encoders
+
+        seg_task = [t for t in tasks if "seg" in t][0]
+        self.bio_ids = {
+                        "B": [i for i,l in label_encoders[seg_task].id2label.items() if "B-" in l],
+                        "I": [i for i,l in label_encoders[seg_task].id2label.items() if "I-" in l],
+                        "O": [i for i,l in label_encoders[seg_task].id2label.items() if "O-" in l],
+                        }
         self.inference = inference
-        self.model = model(
-                            hyperparamaters=hyperparamaters,
-                            task_dims=task_dims,
-                            feature_dims=feature_dims,
-                            inference=inference
-                            )
         self.metrics = MetricContainer()
         self.outputs = {"val":[], "test":[]}
+
+        self.OPT = self.hps["optimizer"]
+        self.LR = self.hps["lr"]
 
 
     def forward(self, batch:ModelInput):
@@ -95,18 +100,18 @@ class PTLBase(ptl.LightningModule):
 
     def _step(self, batch:ModelInput, split):
         batch.current_epoch = self.current_epoch
-        output = self.model.forward(
-                                    batch, 
-                                    ModelOutput(
-                                            batch=batch,
-                                            return_output=True, 
-                                            label_encoders=self.label_encoders, 
-                                            tasks=self.tasks,
-                                            all_tasks=self.all_tasks,
-                                            prediction_level=self.prediction_level,
-                                            inference = self.inference,
-                                            )
+        output = self.forward(
+                            batch, 
+                            ModelOutput(
+                                    batch=batch,
+                                    return_output=True, 
+                                    label_encoders=self.label_encoders, 
+                                    tasks=self.tasks,
+                                    all_tasks=self.all_tasks,
+                                    prediction_level=self.prediction_level,
+                                    inference = self.inference,
                                     )
+                            )
 
         self.metrics.add(output.metrics, split)
         return output.loss.get("total", 0), output
@@ -169,38 +174,38 @@ class PTLBase(ptl.LightningModule):
 
     def configure_optimizers(self):
 
-        if self.model.OPT.lower() == "adadelta":
-            opt = torch.optim.Adadelta(self.parameters(), lr=self.model.LR)
-        elif self.model.OPT.lower() == "sgd":
-            opt = torch.optim.SGD(self.parameters(), lr=self.model.LR)
-        elif self.model.OPT.lower() == "adam":
-            opt = torch.optim.Adam(self.parameters(), lr=self.model.LR)
-        elif self.model.OPT.lower() == "rmsprop":
-            opt = torch.optim.RMSprop(self.parameters(), lr=self.model.LR)
-        elif self.model.OPT.lower() == "adamw":
-            opt = torch.optim.AdamW(self.parameters(), lr=self.model.LR)
+        if self.OPT.lower() == "adadelta":
+            opt = torch.optim.Adadelta(self.parameters(), lr=self.LR)
+        elif self.OPT.lower() == "sgd":
+            opt = torch.optim.SGD(self.parameters(), lr=self.LR)
+        elif self.OPT.lower() == "adam":
+            opt = torch.optim.Adam(self.parameters(), lr=self.LR)
+        elif self.OPT.lower() == "rmsprop":
+            opt = torch.optim.RMSprop(self.parameters(), lr=self.LR)
+        elif self.OPT.lower() == "adamw":
+            opt = torch.optim.AdamW(self.parameters(), lr=self.LR)
         else:
             raise KeyError(f'"{self.OPT}" is not a supported optimizer')
 
-        if "scheduler" in self.hyperparamaters:
-            if self.hyperparamaters["scheduler"].lower() == "rop":
+        if "scheduler" in self.hps:
+            if self.hps["scheduler"].lower() == "rop":
                 scheduler = {
                                 'scheduler': ReduceLROnPlateau(opt),
                                 'monitor': "val_checkpoint_on",
                                 'interval': 'epoch',
                                 'frequency': 1
                             }
-            elif self.hyperparamaters["scheduler"].lower() == "constant_warmup":
+            elif self.hps["scheduler"].lower() == "constant_warmup":
                 scheduler = get_constant_schedule_with_warmup(
                                                                 optimizer=opt,
-                                                                num_warmup_steps=self.hyperparamaters["num_warmup_steps"],
-                                                                last_epoch=self.hyperparamaters.get("schedular_last_epoch", -1)
+                                                                num_warmup_steps=self.hps["num_warmup_steps"],
+                                                                last_epoch=self.hps.get("schedular_last_epoch", -1)
 
                                                                 )
             else:
-                raise KeyError(f'"{self.hyperparamaters["scheduler"]} is not a supported learning shedular')
+                raise KeyError(f'"{self.hps["scheduler"]} is not a supported learning shedular')
 
-        if "scheduler" in self.hyperparamaters:
+        if "scheduler" in self.hps:
             return [opt], [scheduler]
         else:
             return opt

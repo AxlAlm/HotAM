@@ -9,6 +9,8 @@ import torch
 from segnlp.nn.layers.attention import CBAttentionLayer
 
 
+from ..token_loss import TokenCrossEntropyLoss
+
 class Pointer(nn.Module):
 
     """
@@ -37,53 +39,55 @@ class Pointer(nn.Module):
 
     """
 
-    def __init__(self, input_size:int, hidden_size:int, output_size:int, dropout:float=0.0, loss_redu:str="sum"):
+    def __init__(self, 
+                input_size:int, 
+                output_size:int, 
+                hidden_size:int=256, 
+                dropout:float=0.0, 
+                ):
         super().__init__()
+
         self._hidden_size = hidden_size
-        self.input_layer = nn.Linear(input_size, hidden_size)
+        self.input_layer = nn.Linear(input_size, input_size)
         self.lstm_cell =  nn.LSTMCell(input_size, hidden_size)
         self.attention = CBAttentionLayer(
                                         input_dim=hidden_size,
                                         )
     
         self.dropout = nn.Dropout(dropout)
-        self.clf = Linear(hidden_size, output_size)
-        self.loss = nn.CrossEntropyLoss(reduction="sum", ignore_index=-1)
         
-
 
     def forward(self, 
                 encoder_outputs:torch.tensor, 
                 mask:torch.tensor,
-                targets:torch.tensor=None
                 ):
-        device = encoder_outputs.device
-
 
         if isinstance(encoder_outputs, tuple):
 
             encoder_outputs, (encoder_h_s, encoder_c_s) = encoder_outputs
-            
+            device = encoder_outputs.device
+
             seq_len = encoder_outputs.shape[1]
             batch_size = encoder_outputs.shape[0]
 
             # We get the last hidden cell states and timesteps and concatenate them for each directions
             # from (NUM_LAYER*DIRECTIONS, BATCH_SIZE, HIDDEN_SIZE) -> (BATCH_SIZE, HIDDEN_SIZE*NR_DIRECTIONS)
             # The cell state and last hidden state is used to start the decoder (first states and hidden of the decoder)
-            layer_dir_idx = list(range(0, encoder_h_s.shape[0],2))
-            h_s = torch.cat([*encoder_h_s[layer_dir_idx]],dim=1)
-            c_s = torch.cat([*encoder_c_s[layer_dir_idx]],dim=1)
+            # -2 will pick the last layer forward and -1 will pick the last layer backwards
+            h_s = torch.cat((encoder_h_s[-2],encoder_h_s[-1]),dim=1)
+            c_s = torch.cat((encoder_h_s[-2],encoder_h_s[-1]),dim=1)
             
         else:
             seq_len = encoder_outputs.shape[1]
             batch_size = encoder_outputs.shape[0]
+            device = encoder_outputs.device
 
             h_s = torch.rand((batch_size, self._hidden_size), device=device)
             c_s = torch.rand((batch_size, self._hidden_size), device=device)
      
 
         decoder_input = torch.zeros(h_s.shape, device=device)
-        output = torch.zeros(batch_size, seq_len, seq_len, device=device)
+        logits = torch.zeros(batch_size, seq_len, seq_len, device=device)
         for i in range(seq_len):
             
             decoder_input = torch.sigmoid(self.input_layer(decoder_input))
@@ -91,17 +95,13 @@ class Pointer(nn.Module):
 
             h_s, c_s = self.lstm_cell(decoder_input, (h_s, c_s))
 
-            output[:, i] = self.attention(h_s, encoder_outputs, mask, return_softmax=False)
+            logits[:, i] = self.attention(h_s, encoder_outputs, mask, return_softmax=False)
         
-        
-        loss = None
-        if targets is not None:
-            loss = self.loss(torch.flatten(output, end_dim=-2), targets.view(-1))
-
-        preds = torch.argmax(output, dim=-1)
+        preds = torch.argmax(logits, dim=-1)
 
         return {
-                "loss": loss,
+                "logits": logits,
                 "preds":preds,
+                "level": unit
                 }
 

@@ -4,21 +4,22 @@
 import torch
 import torch.nn as nn
 
-class Encoder(nn.Module):
+#segnlp
+from segnlp.nn.layers.rep_layers import LSTM
+
+class LLSTMEncoder(nn.Module):
 
     """
     This is an encoder layer build from x
-
-
 
     """
 
     def __init__(   
                     self,  
                     input_size:int, 
-                    hidden_size:int, 
-                    num_layers:int, 
-                    bidirectional:int,
+                    hidden_size:int=256, 
+                    num_layers:int=1, 
+                    bidir:bool=True,
                     dropout:float=0.0,
                     ):
         super().__init__()
@@ -29,10 +30,9 @@ class Encoder(nn.Module):
                                 input_size=input_size,
                                 hidden_size=hidden_size,
                                 num_layers=num_layers,
-                                bidirectional=bidirectional,
+                                bidir=bidir,
                                 )
- 
-  
+        self.output_size = hidden_size* (2 if bidir else 1)
 
 
     def forward(self, X, lengths):

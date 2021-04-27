@@ -2,7 +2,7 @@
 import segnlp
 from segnlp import Pipeline
 from segnlp.datasets.am import PE
-from segnlp.nn.models.general import LSTM_CRF
+from segnlp.nn.models.am import JointPN
 from segnlp.features import GloveEmbeddings, FlairEmbeddings, BertEmbeddings
 from segnlp.nn.default_hyperparamaters import get_default_hps
 
@@ -15,24 +15,24 @@ from pprint import pprint
 exp = Pipeline(
                 project="debugging",
                 dataset=PE( 
-                            tasks=["seg+label"],
+                            tasks=["seg","label","link"],
                             prediction_level="token",
-                            sample_level="sentence",
+                            sample_level="paragraph",
                             ),
                 features =[
                             GloveEmbeddings(),
                             #FlairEmbeddings(),
                             #BertEmbeddings(),
                             ],
-                model = LSTM_CRF
+                model = JointPN
             )
 
 exp.dataset.info
 
 segnlp.settings["dl_n_workers"] = 0
-hps = get_default_hps(LSTM_CRF.name())
+hps = get_default_hps(JointPN.name())
 hps["max_epochs"] = 2
-hps["lr"] = [0.01,0.001]
+#hps["lr"] = [0.01,0.001]
 
 best_hp = exp.hp_tune(
                         hyperparamaters = hps,
@@ -40,10 +40,10 @@ best_hp = exp.hp_tune(
                         ptl_trn_args=dict(
                                             overfit_batches=0.1,
                                             #gpus=[0]
-                                        )
+                                            )
                         )
 
-exp.test()
+#exp.test()
 
 
 

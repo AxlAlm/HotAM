@@ -1,4 +1,10 @@
 
+
+#basics
+from typing import Tuple
+
+#pytroch
+import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
@@ -7,10 +13,10 @@ class LSTM(nn.Module):
     def __init__(   
                     self,
                     input_size:int,
-                    hidden_size:int, 
-                    num_layers:int, 
-                    bidirectional:bool, 
-                    dropout:float=None,
+                    hidden_size:int=256, 
+                    num_layers:int=1, 
+                    bidir:bool=True, 
+                    dropout:float=0.0,
                     ):
         super().__init__()
 
@@ -18,23 +24,28 @@ class LSTM(nn.Module):
                                 input_size=input_size,
                                 hidden_size=hidden_size,
                                 num_layers=num_layers, 
-                                bidirectional=bidirectional,  
+                                bidirectional=bidir,  
                                 batch_first=True
                             )
 
-        if dropout:
-            self.dropout = nn.Dropout(self.DROPOUT)
+        self.dropout = nn.Dropout(dropout)
+        self.output_size = hidden_size* (2 if bidir else 1)
 
 
-    def forward(self, X, lengths, padding=0.0):
+    def forward(self, 
+                input:torch.tensor, 
+                lengths:torch.tensor, 
+                padding=0.0) -> Tuple[torch.tensor, Tuple[torch.tensor,torch.tensor]]:
+
+        input = self.dropout(input)
         
         pass_states = False
-        if isinstance(X, tuple):
+        if isinstance(input, tuple):
            #X, h_0, c_0 = X
-            X, *states = X
+            input, *states = input
             pass_states = True
 
-        packed_embs = nn.utils.rnn.pack_padded_sequence(X, lengths, batch_first=True)
+        packed_embs = nn.utils.rnn.pack_padded_sequence(input, lengths, batch_first=True)
 
         if pass_states:
             lstm_packed, hidden = self.lstm(packed_embs, states)

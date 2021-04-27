@@ -23,6 +23,7 @@ from segnlp.nn.layers.rep_layers import TypeTreeLSTM
 
 
 class DepPairingLayer(nn.Module):
+    
     def __init__(self,
                  tree_input_size: int,
                  tree_lstm_h_size: int,

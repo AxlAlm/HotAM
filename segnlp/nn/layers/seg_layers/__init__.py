@@ -1,6 +1,2 @@
 from .bigram_seg import BigramSegLayer
-
-
-__all__ = [
-            "BigramSegLayer",
-            ]
+from .lstm_crf import LSTM_CRF

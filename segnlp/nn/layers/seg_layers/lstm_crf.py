@@ -24,21 +24,28 @@ class LSTM_CRF(nn.Module):
 
     """
 
-    def __init__(self, input_dim:int, hidden_dim:int, num_layers:int, bidir:bool, output_dim:int, dropout:float=0.0):
+    def __init__(self, 
+                input_size:int, 
+                output_size:int, 
+                hidden_size:int=256, 
+                num_layers:int=1, 
+                bidir:bool=True, 
+                dropout:float=0.0,
+                loss_redu:str = "mean"
+                ):
         super().__init__()
-        self.inference = inference
+        self.loss_redu = loss_redu
         self.dropout = nn.Dropout(dropout)
         self.lstm = LSTM(  
-                            input_size = input_dim,
-                            hidden_size = hidden_dim,
+                            input_size = input_size,
+                            hidden_size = hidden_size,
                             num_layers = num_layers,
-                            bidirectional = bidir,
+                            bidir = bidir,
                             )
 
-        #for task, output_dim in task_dims.items():
-        self.clf = nn.Linear(hidden_dim*(2 if bidir else 1),output_dim)
+        self.clf = nn.Linear(hidden_size*(2 if bidir else 1),output_size)
         self.crf = CRF(    
-                        num_tags=output_dim,
+                        num_tags=output_size,
                         batch_first=True
                         )
     
@@ -48,29 +55,29 @@ class LSTM_CRF(nn.Module):
         return "LSTM_CRF"
 
 
-    def forward(self, input_embs, mask, length, targets=None):
-
-        lengths = batch["token"]["lengths"]
-        mask = batch["token"]["mask"]
-        word_embs = batch["token"]["word_embs"]
+    def forward(self, input_embs, mask, lengths, targets=None):
 
         input_embs = self.dropout(input_embs)
         lstm_out, _ = self.lstm(input_embs, lengths)
         out = self.clf(lstm_out)
 
-        if targets:
-            loss = -crf(    
+        loss = None
+        if targets is not None:
+            targets[targets == -1] = 0
+
+            loss = -self.crf(    
                         emissions=out, #score for each tag, (batch_size, seq_length, num_tags) as we have batch first
                         tags=targets,
                         mask=mask,
-                        reduction='mean'
+                        reduction=self.loss_redu
                         )
 
         #returns preds with no padding (padding values removed)
-        preds = crf.decode( 
-                            emissions=dense_out, 
+        preds = self.crf.decode( 
+                            emissions=out, 
                             mask=mask
                             )
+        preds = torch.tensor(zero_pad(preds))
 
         return {
                     "loss": loss, 

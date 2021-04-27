@@ -1,19 +1,15 @@
-
-
 #basics
 from typing import Union, List
 import numpy as np
-import pandas as pd
 
 
 #segnlp
 from segnlp.metrics import token_metrics
-from . import ModelInput
-from segnlp.utils import ensure_flat, ensure_numpy
-from segnlp.nn.utils import bio_decode
-
-# from segnlp.visuals.tree_graph import arrays_to_tree
-# from segnlp.visuals.text_markers import highlight_text
+from segnlp.nn.utils import ModelInput
+from segnlp.utils import ensure_numpy
+from segnlp.nn.utils import BIODecoder
+#from segnlp.visuals.tree_graph import arrays_to_tree
+#from segnlp.visuals.text_markers import highlight_text
 
 #pytorch
 import torch
@@ -30,12 +26,13 @@ class ModelOutput:
                 tasks:list,
                 all_tasks:list,
                 prediction_level:str,
-                inference:bool,
+                inference:bool=True,
                 ):
 
         self.return_output = return_output
         self.inference = inference
         self.label_encoders = label_encoders
+
         self.tasks = tasks
         self.all_tasks = all_tasks
         self.prediction_level = prediction_level
@@ -44,20 +41,16 @@ class ModelOutput:
 
         self.loss = {}
         self.metrics = {}
-        self.outputs = {
-                        "sample_idx":np.concatenate([np.full(int(l),int(i)) for l,i in zip(self.batch["token"]["lengths"],self.batch.idxs)]),
-                        "text": ensure_flat(ensure_numpy(self.batch["token"]["text"]), mask=ensure_numpy(self.batch["token"]["mask"]))
-                        }
+        self.outputs = {}
         self.pred_spans = {}
         self._pred_span_set = False
-        self.mask = []
+
         
 
     def __add_subtask_preds(self, decoded_labels:np.ndarray, lengths:np.ndarray, level:str,  task:str):
         """
         given that some labels are complexed, i.e. 2 plus tasks in one, we can break these apart and 
         get the predictions for each of the task so we can get metric for each of them. 
-
         for example, if one task is Segmentation+Arugment Component Classification, this task is actually two
         tasks hence we can break the predictions so we cant get scores for each of the tasks.
         """
@@ -172,7 +165,6 @@ class ModelOutput:
         """
         Any link that is outside of the actuall text, e.g. when predicted link > max_idx, is set to predicted_link== max_idx
         https://arxiv.org/pdf/1704.06104.pdf
-
         """
         new_links = []
         for i in range(links.shape[0]):
@@ -274,7 +266,7 @@ class ModelOutput:
                                             )
 
             if not self._pred_span_set:
-                self.pred_spans["lengths"] = self.batch[level]["lengths"]
+                self.pred_spans["unit_lengths"] = self.batch[level]["lengths"]
                 self.pred_spans["lengths_tok"] = self.batch["span"]["lengths_tok"]
                 self.pred_spans["none_span_mask"] = self.batch["span"]["none_span_mask"]
                 self._pred_span_set = True
@@ -285,7 +277,7 @@ class ModelOutput:
         if task == "link":
             data = self.__correct_links(
                                         data,
-                                        lengths_units=ensure_numpy(self.pred_spans["lengths"]),
+                                        lengths_units=ensure_numpy(self.pred_spans["unit_lengths"]),
                                         span_token_lengths=ensure_numpy(self.pred_spans["lengths_tok"]),
                                         none_spans=ensure_numpy(self.pred_spans["none_span_mask"]),
                                         decoded=decoded
@@ -301,7 +293,7 @@ class ModelOutput:
                                                                     span_lengths=ensure_numpy(self.pred_spans["lengths_tok"]),
                                                                     none_spans=ensure_numpy(self.pred_spans["none_span_mask"])
                                                                     )
-                if not self.inference:
+                if self.calc_metrics:
                     decoded_targets = self.__decode_token_link_labels(
                                                                         preds=ensure_numpy(self.batch[level][task]), 
                                                                         lengths=ensure_numpy(self.batch[level]["lengths"]),
@@ -315,7 +307,7 @@ class ModelOutput:
                                                     lengths=ensure_numpy(self.batch[level]["lengths"]),
                                                     task=task
                                                     )
-                if not self.inference:
+                if self.calc_metrics:
                     decoded_targets = self.__decode_labels(
                                                             preds=ensure_numpy(self.batch[level][task]), 
                                                             lengths=ensure_numpy(self.batch[level]["lengths"]),
@@ -325,7 +317,7 @@ class ModelOutput:
             decoded_preds = data
 
             if task == "link" and level == "token":
-                if not self.inference:
+                if self.calc_metrics:
                     decoded_targets = self.__decode_token_link_labels(
                                                             preds=ensure_numpy(self.batch[level][task]), 
                                                             lengths=ensure_numpy(self.batch[level]["lengths"]),
@@ -333,7 +325,7 @@ class ModelOutput:
                                                             none_spans=ensure_numpy(self.batch["span"]["none_span_mask"])
                                                             )
             else:
-                if not self.inference:
+                if self.calc_metrics:
                     decoded_targets = self.__decode_labels(
                                                             preds=ensure_numpy(self.batch[level][task]), 
                                                             lengths=ensure_numpy(self.batch[level]["lengths"]),
@@ -342,104 +334,290 @@ class ModelOutput:
 
 
         if task == "seg":
-            lengths_tok, none_span_mask, lengths = bio_decode(
-                                                                batch_encoded_bios=decoded_preds,
-                                                                lengths=ensure_numpy(self.batch[level]["lengths"]),
-                                                            )
-            self.pred_spans["lengths_tok"] = lengths_tok
-            self.pred_spans["none_span_mask"] = none_span_mask
-            self.pred_spans["lengths"]  = lengths
+            bio_data = BIODecoder()(
+                                    batch_encoded_bios=decoded_preds,
+                                    lengths=ensure_numpy(self.batch[level]["lengths"]),
+                                    )
+            self.pred_spans["lengths_tok"] = bio_data["span"]["lengths_tok"]
+            self.pred_spans["none_span_mask"] = bio_data["span"]["none_span_mask"]
+            self.pred_spans["unit_lengths"]  = bio_data["unit"]["lengths"]
+        
+
+        if task not in self.outputs:
+            self.outputs[task] = []
+
+        self.outputs[task].extend(decoded_preds)
 
 
-        mask = ensure_numpy(self.batch["token"]["mask"])
-        preds = ensure_flat(ensure_numpy(decoded_preds), mask=mask)
-        targets = ensure_flat(ensure_numpy(decoded_targets), mask=mask)
-        self.outputs[task] = preds
-
-        if not self.inference:
-            self.outputs[f"T-{task}"] = targets
+        if self.inference:
             self.metrics.update(token_metrics(
-                                            targets=preds,
-                                            preds=targets,
+                                            targets=decoded_targets,
+                                            preds=decoded_preds,
+                                            mask=ensure_numpy(self.batch["token"]["mask"]),
                                             task=task,
                                             labels=self.label_encoders[task].labels,
                                             )
                                 )
 
+   
+        
+        # if return_output:
+
+
+        #     if sample_ids == "same":
+
+        #         if isinstance(return_output) == bool:
+
+        #             set(ensure_numpy(self.batch["ids"]).tolist()).union(set(return_output))
+
+        #     else:
+        #         raise NotImplementedError()
+
+
+        # #self.preds[task] = seg_labels
+
+
     def add_probs(self, task:str, level:str, data:torch.tensor):
-        raise NotImplementedError
+
+        assert torch.is_tensor(data), f"{task} probs need to be a tensor"
+        assert len(data.shape) == 3, f"{task} probs need to be a 3D tensor"
+        
+        pass
         
 
-    def to_df(self):
-        return pd.DataFrame(self.outputs)
-
-
-    def to_record(self):
-        return self.to_df().to_dict("records")
-
-
-    # def show_sample(self, prefix=""):
+    def show_sample(self, prefix=""):
         
-    #     tokens = []
-    #     pred_labels = None
-    #     pred_span_lengths = []
-    #     pred_span_mask = []
+        tokens = []
+        pred_labels = None
+        pred_span_lengths = []
+        pred_span_mask = []
 
-    #     if "label" in self.outputs:
-    #         pred_labels = []
+        if "label" in self.outputs:
+            pred_labels = []
 
-    #     for idx in  self.batch.oo:
-    #         token_len = self.batch["token"]["lengths"][idx]
-    #         tokens.extend(self.batch[self.prediction_level]["text"][idx][:token_len])
+        for idx in  self.batch.oo:
+            token_len = self.batch["token"]["lengths"][idx]
+            tokens.extend(self.batch[self.prediction_level]["text"][idx][:token_len])
             
-    #         if pred_labels is not None:
-    #             pred_labels.extend(self.outputs["label"][idx][:token_len])
+            if pred_labels is not None:
+                pred_labels.extend(self.outputs["label"][idx][:token_len])
 
-    #         pred_span_lengths.extend(self.pred_spans["lengths_tok"][idx])
-    #         pred_span_mask.extend(self.pred_spans["none_span_mask"][idx])
+            pred_span_lengths.extend(self.pred_spans["lengths_tok"][idx])
+            pred_span_mask.extend(self.pred_spans["none_span_mask"][idx])
 
-    #     # if "link" in self.outputs:
+        # if "link" in self.outputs:
 
-    #     #     link_labels = self.outputs.get("link_label", None)
-    #     #     if link_labels is not None:
-    #     #         link_labels = link_labels[idx]
+        #     link_labels = self.outputs.get("link_label", None)
+        #     if link_labels is not None:
+        #         link_labels = link_labels[idx]
 
 
-    #     #     links = self.label_encoders["link"].encode_token_links(
-    #     #                                                                     self.outputs["link"][idx],
-    #     #                                                                     span_token_lengths=self.pred_spans["lengths_tok"][idx],
-    #     #                                                                     none_spans=self.pred_spans["none_span_mask"][idx]
-    #     #                                                                     )
+        #     links = self.label_encoders["link"].encode_token_links(
+        #                                                                     self.outputs["link"][idx],
+        #                                                                     span_token_lengths=self.pred_spans["lengths_tok"][idx],
+        #                                                                     none_spans=self.pred_spans["none_span_mask"][idx]
+        #                                                                     )
 
-    #     #     arrays_to_tree(
-    #     #                     self.pred_spans["lengths"][idx], 
-    #     #                     self.pred_spans["lengths_tok"][idx],
-    #     #                     self.pred_spans["none_span_mask"][idx],
-    #     #                     links=links,
-    #     #                     labels=self.outputs["label"][idx],
-    #     #                     tokens=self.batch[self.prediction_level]["text"][idx],
-    #     #                     label_colors=get_dataset("pe").label_colors(),
-    #     #                     link_labels=link_labels,
-    #     #                     )
+        #     arrays_to_tree(
+        #                     self.pred_spans["lengths"][idx], 
+        #                     self.pred_spans["lengths_tok"][idx],
+        #                     self.pred_spans["none_span_mask"][idx],
+        #                     links=links,
+        #                     labels=self.outputs["label"][idx],
+        #                     tokens=self.batch[self.prediction_level]["text"][idx],
+        #                     label_colors=get_dataset("pe").label_colors(),
+        #                     link_labels=link_labels,
+        #                     )
         
-    #     return highlight_text(
-    #                     tokens=tokens,
-    #                     labels=["Premise", "Claim", "MajorClaim"], 
-    #                     pred_labels=pred_labels,
-    #                     pred_span_lengths=pred_span_lengths,
-    #                     pred_none_spans=pred_span_mask,
-    #                     gold_labels=None,
-    #                     gold_span_lengths=None,
-    #                     gold_none_spans=None,
-    #                     save_path=None, 
-    #                     return_html=True, 
-    #                     prefix=prefix,
-    #                     # show_spans:bool=True, 
-    #                     show_scores=True if pred_labels is not None else False, 
-    #                     # show_legend:bool=True,
-    #                     # font:str="Verdana", 
-    #                     # width:int=1000, 
-    #                     # height:int=800
-    #                     )
+        return highlight_text(
+                        tokens=tokens,
+                        labels=["Premise", "Claim", "MajorClaim"], 
+                        pred_labels=pred_labels,
+                        pred_span_lengths=pred_span_lengths,
+                        pred_none_spans=pred_span_mask,
+                        gold_labels=None,
+                        gold_span_lengths=None,
+                        gold_none_spans=None,
+                        save_path=None, 
+                        return_html=True, 
+                        prefix=prefix,
+                        # show_spans:bool=True, 
+                        show_scores=True if pred_labels is not None else False, 
+                        # show_legend:bool=True,
+                        # font:str="Verdana", 
+                        # width:int=1000, 
+                        # height:int=800
+                        )
 
     
+    # def clear(self):
+    #     self.batch = None
+    #     self.loss = {}
+    #     self.output = {}
+
+
+
+
+
+
+
+    # def __get_segment_labels(labels:list, seg_lengths:list, seg_types:list, max_nr_segs:int, task:str):
+
+    #     nr_samples = labels.shape[0]
+    #     seg_labels = torch.zeros(nr_samples, max_nr_segs)
+    #     i = 0
+    #     for i in range(nr_samples):
+    #         floor = 0
+    #         type_length = zip(seg_types[i] , seg_lengths[i])
+    #         # we dont want segments taht are not Argument Components. These ones we filter out.
+    #         sample_seg_lens = [l for t,l in type_length if t is not None] 
+    #         nr_segs = len(sample_seg_lens)
+    #         for j in range(nr_segs):
+                    
+    #             seg_labels = labels[i][floor:floor+length]
+    #             most_freq_label = Counter(seg_labels).most_common(1)[0][0]
+
+    #             if task == "relation":
+                    
+    #                 point_to_idx = j + most_freq_label 
+    #                 if point_to_idx > nr_segs or point_to_idx < 0:
+    #                     most_freq_label = nr_segs - j
+
+    #             seg_labels[i][j] = most_freq_label
+    #             floor += length
+
+    #     return seg_labels
+
+
+
+
+
+    # def __handle_segmentation(self,data);
+    #     self.seg["seg_lengths"], self.seg["types"], self.seg["lenghts_seq"] = self.bio.decode(
+    #                                                                                         batch_encoded_bios=data, 
+    #                                                                                         lengths=self.batch["lengths_tok"]
+    #                                                                                         )
+
+    #     # if calc_metrics:
+    #     #     seg_results = calc_seg_metrics( 
+    #     #                                     target_seg_lens=self.batch["lengths_seq"], 
+    #     #                                     pred_seg_lens=self.seg["seg_lengths"]
+    #     #                                     )
+
+    #     # self._seg_lens_added = True
+
+    # def add_preds(self, task:str, level:str, data:torch.tensor):
+
+    #     assert task in set(self.dataset.all_tasks), f"{task} is not a supported task. Supported tasks are: {self.dataset.all_tasks}"
+    #     assert level in set(["token", "ac"]), f"{level} is not a supported level. Only 'token' or 'ac' are supported levels"
+    #     assert torch.is_tensor(data), f"{task} preds need to be a tensor"
+    #     assert len(data.shape) == 2, f"{task} preds need to be a 2D tensor"
+        
+    #     if "seg" in task and not self._seg_lens_added:
+    #         self.__handle_segmentation(
+    #                                     data=data
+    #                                     )
+    #         return
+
+
+    #     # If we are prediction on token level we need to convert the labels to segment labels. For this we need
+    #     # the length of each segment predicted by the model.
+    #     if level == "token":
+    #         if not self._seg_lens_added:
+    #             raise RuntimeError("When segmentation is a subtasks it needs to be added first to output")
+    
+    #     # If we are prediction on ACs and input is on AC level we can use the information of how many ACs a sample has directly from out input.
+    #     # Same applies if prediction level is token; we get this information explicitly from our preprocessing
+    #     # and same applies if input level i token and prediction level is AC
+    #     #
+    #     # However, if the prediction level is token and the input level is AC, we need to use the prediction lengths derived from our segmentation predictions
+    #     if level == "ac" and self.dataset.prediction_level == "ac":
+    #         lengths = self.batch["lengths_seq"]
+
+    #     elif level == "token" and self.dataset.prediction_level == "token":
+    #         lengths = self.batch["lengths_tok"]
+
+    #     elif level == "ac" and self.dataset.prediction_level == "token":
+    #         lengths = self.seg["lenghts_seq"]
+
+    #     elif level == "token" and self.dataset.prediction_level == "ac":
+    #         lengths = self.batch["lengths_tok"]
+
+
+    #     if "_" in task:
+    #         self.__handle_complex_tasks(
+    #                                     data=data,
+    #                                     level=level,
+    #                                     lengths=lengths
+    #                                     )
+    #         return
+
+
+
+    #     if level == "ac":
+    #         seg_labels = self.__decode_labels(
+    #                                             preds=data, 
+    #                                             lengths=lengths
+    #                                             )
+
+    #     else:
+    #         decoded_labels = self.__decode_labels(
+    #                                                 preds=data, 
+    #                                                 lengths=lengths
+    #                                                 )
+
+    #         seg_labels = self.__get_segment_labels(
+    #                                                 labels=decoded_labels, 
+    #                                                 seg_lengths=,
+    #                                                 seg_types=list,
+    #                                                 max_nr_segs=self.dataset.max_nr_segs, 
+    #                                                 task=task
+    #                                                 )
+            
+    #     if calc_metrics:
+
+    #         if self.dataset.prediction_level == "ac":
+    #             pred_lengths = self.batch["lengths_seq"]
+    #         else:
+    #             pred_lengths = self.seg["lengths_seq"]
+
+    #         task_metrics = calc_metrics(
+    #                                     targets=self.batch["AC_TARGETS FOR TASK"],
+    #                                     preds=seg_labels,
+    #                                     target_lengths=self.batch["lengths_seq"],
+    #                                     pred_lengths=pred_lengths,
+    #                                     task=task,
+    #                                     prefix=self.current_split,
+    #                                     )
+
+    #     self.preds[task] = seg_labels
+
+
+
+
+    # outputs = {}
+
+    # #first we decode the complex tasks, and get the predictions for each of the subtasks
+    # complex_tasks = [task for task in self.dataset.tasks if "_" in task]
+    # for c_task in complex_tasks:
+    #     decoded_labels = decode(preds=preds, lengths=lengths)
+    #     subtask_preds = get_subtask_preds(decoded_labels=decoded_labels, task=c_task)
+    #     output_dict.update(subtask_preds)
+
+
+    # for task in self.dataset.subtasks:
+        
+    #     #if we have the decoded labels
+    #     if task not in output_dict:
+    #         decoded_labels = outputs[task]
+        
+    #     #if we dont have the decoded labels
+    #     else:
+    #         decoded_labels = decode(preds=preds, lengths=lengths)
+    #         outputs[task] = decoded_labels
+
+
+    #     get_segment_labels(decoded_labels, segment_lengths, segment_types, max_nr_segs, task)
+
+
+    # return outputs

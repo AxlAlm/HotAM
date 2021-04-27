@@ -53,7 +53,7 @@ class MTC(DataSet):
                 ):
         task_labels = {     
                             "seg":  ["O","B","I"],
-                            "label":["pro", "opp"],
+                            "label":["None", "pro", "opp"],
                             "link_label": ["None", "sup", "exa", "add", "reb", "und"],
                             "link": list(range(-6,6,1))
                             }

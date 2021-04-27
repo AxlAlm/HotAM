@@ -90,7 +90,7 @@ class PE(DataSet):
                 ):
         task_labels = {
                             "seg": ["O","B","I"],
-                            "label":["MajorClaim", "Claim", "Premise"],
+                            "label":["None", "MajorClaim", "Claim", "Premise"],
                             # Originally stance labels are For and Against for Claims and MajorClaims
                             # and for premsies supports or attacks. 
                             # However, Against and attacks are functional equivalent so will use CON for both
@@ -363,7 +363,7 @@ class PE(DataSet):
                 current_unit_id += 1
 
             label = {   
-                        "label": ac_id2ac.get(ac_id,"None"), 
+                        "label": ac_id2ac.get(ac_id, "None"), 
                         "link_label": self._stance2new_stance.get(ac_id2stance.get(ac_id,"None"), "None"), 
                         "link": relation,
                         "span_id": i,

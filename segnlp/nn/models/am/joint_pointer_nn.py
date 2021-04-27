@@ -5,138 +5,65 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 #segnlp
-from segnlp.nn.layers.rep_layers import LSTM
+from segnlp.nn.layers.rep_layers import LLSTMEncoder
 from segnlp.nn.layers.link_layers import Pointer
+from segnlp.nn.layers.clf_layer import SimpleCLF
+from segnlp.nn.layers.seg_layers import LSTM_CRF
+from segnlp.nn.utils import BIODecoder
 from segnlp.nn.utils import agg_emb
+from segnlp.nn.utils import create_mask
+from segnlp.ptl import PTLBase
 
 
-class JointPN(nn.Module):
+class JointPN(PTLBase):
 
     """
-    
-    Paper:
+    Inspiration from paper:
     https://arxiv.org/pdf/1612.08994.pdf
-
 
     more on Pointer Networks:
     https://arxiv.org/pdf/1409.0473.pdf
-
     https://papers.nips.cc/paper/5866-pointer-networks.pdf  
-
 
     A quick read:
     https://medium.com/@sharaf/a-paper-a-day-11-pointer-networks-59f7af1a611c
 
-
-    NN FLow:
-
-    Encoder:
-    ______
-    1) pass input to a fully-connected layer with sigmoid activation
-
-    2)  pass output of 1) to a Bi-LSTM. 
-  
-
-    Decoder:
-    ______
-    
-    As the decoder is working over timesteps we will use a LstmCell which we pass the last cell states to, along with appropriately 
-    modified input
-
-    For each timestep (max seq length):
-
-    4)  Decoder takes the last states (cell and timestep) from the encoder to init the decoder.
-
-        foward and backwards concatenations of last layer in encoder lstm. 
-
-        As first input, we pass and zero tensor as there is no input arrow
-        architecture in the paper. This also make sense as there are no previous 
-        decoding timesteps, which the input is intended to be, hence there is 
-        nothing to pass. One could pass a random value tensor representing START
-    
-    5)  the input to the next decoder is set as the hidden state outputed from the
-        LSTM-cell. Hidden state and cells state are also set as next states for 
-        the cell in the next timestep (just as an LSTM)
-
-    6)  the hidden state is then passed to a Linear Layer with sigmoid activation (FC3 in the paper)
-        NOTE! This layer is meant to modify the input prior to the decoder lstm but as we see in the 
-        figure 3 in the paper there is no input to the first decoder step, which means we can just set 
-        this layer after and apply it to the next input to the next decoder step, which will
-        be in accordance with figure 3 in the paper.
-    
-    7)  the hidden state of the decoder is then passed to Content Based Attention layer along
-        with all the Encoder outputs. We then "compare" the decoder output at timestep i (di) with
-        all the encoder outputs so that we can get a probability that di is pointing to any En
-    
-    ________
-
-    8) to get the relation predictions we simply take the argmax of the attention output which is softmax.
-        to get the loss we take the sum of the log softmax  * task weight.
-
-    9) to predict Argument Component we pass the encoder output to a linear layer and apply softmax
-        to get probs, and argmax for predictions. For loss we use log_softmax * task weight.
-
-    10) Total loss of the task is relation loss + ac loss
-
-
-
-    NOTE! Regarding dropout. 
-    In the paper they state they are using dropout but not where they are applying it 
-    so we can only guess where the dropout is applied. In this implementation we have hence
-    decided to divide dropout into 3 types feature_dropout (applied at features), 
-    encoder dropout (applied on out LSTM), and decoder dropout (applied on out LSTM)
-
     """
     
-    def __init__(self, hyperparamaters:dict, task_dims:dict, feature_dims:dict, inference:bool):
-        super().__init__()
-        self.inference = inference
-        self.OPT = hyperparamaters["optimizer"]
-        self.LR = hyperparamaters["lr"]
-        self.ENCODER_INPUT_DIM = hyperparamaters["encoder_input_dim"]
-        self.ENCODER_HIDDEN_DIM = hyperparamaters["encoder_hidden_dim"]
-        self.DECODER_HIDDEN_DIM = hyperparamaters["decoder_hidden_dim"]
-        self.ENCODER_NUM_LAYERS = hyperparamaters["encoder_num_layers"]
-        self.ENCODER_BIDIR = hyperparamaters["encoder_bidir"]
-            
-        self.F_DROPOUT = hyperparamaters.get("feature_dropout", None)
-        self.ENC_DROPOUT = hyperparamaters["encoder_dropout"]
-        self.DEC_DROPOUT = hyperparamaters["decoder_dropout"]
+    def __init__(self,  *args, **kwargs):   
+        super().__init__(*args, **kwargs)
 
-        # times 3 becasue we use the max+min+avrg embeddings
-        self.FEATURE_DIM =  feature_dims["doc_embs"] + (feature_dims["word_embs"] * 3)
-
-        # α∈[0,1], will specify how much to weight the two task in the loss function
-        self.TASK_WEIGHT = hyperparamaters["task_weight"]
-
-        if self.DECODER_HIDDEN_DIM != self.ENCODER_HIDDEN_DIM*(2 if self.ENCODER_BIDIR else 1):
-            raise RuntimeError("Encoder - Decoder dimension missmatch. As the decoder is initialized by the encoder states the decoder dimenstion has to be encoder_dim * nr_directions")
-        
-        self.use_feature_dropout = False
-        if self.F_DROPOUT:
-            self.use_feature_dropout = True
-            self.feature_dropout = nn.Dropout(self.F_DROPOUT)
-
-        self.encoder = Encoder(
-                                input_size=self.FEATURE_DIM,
-                                hidden_size=self.ENCODER_HIDDEN_DIM,
-                                num_layers= self.ENCODER_NUM_LAYERS,
-                                bidirectional=self.ENCODER_BIDIR,
-                                dropout = self.ENC_DROPOUT
-                                )
-
-        self.decoder = Pointer(
-                                input_size=self.DECODER_HIDDEN_DIM,
-                                hidden_size=self.DECODER_HIDDEN_DIM,
-                                dropout = self.DEC_DROPOUT
-                                )
+        lstm_crf_params = self.hps.get("lstm_crf", {})
+        encoder_params = self.hps.get("llstm_encoder", {})
+        pointer_params = self.hps.get("pointer", {})
+        simple_label_l_params = self.hps.get("simpleclf-label", {})
 
 
-        self.label_clf = nn.Linear(self.ENCODER_HIDDEN_DIM*(2 if self.ENCODER_BIDIR else 1), task_dims["label"])
-        self.loss = nn.CrossEntropyLoss(reduction="sum", ignore_index=-1)
+        lstm_crf_params["input_size"] = self.feature_dims["word_embs"]
+        lstm_crf_params["output_size"] = self.task_dims["seg"]
+        self.seg_layer = LSTM_CRF(**lstm_crf_params)
 
 
-        self.label_clf =  SimpleCLF()
+        encoder_params["input_size"] = self.feature_dims["word_embs"] * 3
+        self.encoder = LLSTMEncoder(**encoder_params)
+
+
+        pointer_params["input_size"] = self.encoder.output_size
+        pointer_params["hidden_size"] = self.encoder.output_size
+        pointer_params["output_size"] = self.task_dims["link"]
+        self.decoder = Pointer(**pointer_params)
+
+
+        simple_label_l_params["input_size"] = self.encoder.output_size
+        simple_label_l_params["output_size"] = self.task_dims["label"]
+        simple_label_l_params["level"] = "unit"
+        self.label_clf =  SimpleCLF(**simple_label_l_params)
+
+        self.bio_decoder = BIODecoder(
+                                        B = self.bio_ids["B"],
+                                        I = self.bio_ids["I"],
+                                        O = self.bio_ids["O"],
+                                        )
 
     @classmethod
     def name(self):
@@ -145,40 +72,68 @@ class JointPN(nn.Module):
 
     def forward(self, batch, output):
 
-        # seg_layer seg_layer(
-        #                     batch["token"]["word_embs"],
-        #                     mask=batch["token"]["mask"]
-        #                     )
-        # seg_layer
-        # bio_data = bio_decode()
-        #
-        #
+        print("WORD EMB", batch["token"]["word_embs"].shape)
 
+        seg_output = self.seg_layer(
+                                    batch["token"]["word_embs"],
+                                    mask = batch["token"]["mask"],
+                                    lengths = batch["token"]["lengths"],
+                                    targets = batch["token"]["seg"] if not self.inference else None
+                                    )
+
+        bio_output = self.bio_decoder(
+                                        seg_output["preds"],
+                                        batch["token"]["lengths"],
+                                        )
+        unit_mask = create_mask(bio_output["unit"]["lengths"])
+
+            
         unit_embs = agg_emb(
                             batch["token"]["word_embs"], 
-                            lengths = batch["unit"]["lengths"],
-                            span_indexes = batch["unit"]["span_idxs"], 
+                            lengths = bio_output["unit"]["lengths"],
+                            span_indexes = bio_output["unit"]["span_idxs"], 
                             mode = "mix"
                             )
 
-        X = torch.cat((unit_embs, batch["unit"]["doc_embs"]), dim=-1)
 
-        encoder_out = self.encoder(X, batch["unit"]["lengths"])
+        encoder_out = self.encoder(
+                                    unit_embs, 
+                                    bio_output["unit"]["lengths"]
+                                    )
+
+
+        label_outputs =  self.label_clf(
+                                        encoder_out[0],
+                                        targets = batch["token"]["label"] if not self.inference else None,
+                                        mask = unit_mask,
+                                        unit_tok_lengths = bio_output["unit"]["lengths_tok"]
+
+                                        )
+
+
         link_output = self.decoder(
                                     encoder_out, 
-                                    batch["unit"]["mask"], 
+                                    mask = unit_mask, 
+                                    targets = batch["token"]["link"] if not self.inference else None,
+                                    unit_tok_lengths = bio_output["unit"]["lengths_tok"]
                                     )
-        label_outputs =  self.label_clf(encoder_out[0])
+
+        print("SEG LOSS", seg_output["loss"])
+        print("LABEL LOSS", label_outputs["loss"])
+        print("LINK LOSS", link_output["loss"])
+
 
         if not self.inference:
-            total_loss = ((1-self.TASK_WEIGHT) * link_output["loss"]) + ((1-self.TASK_WEIGHT) * label_outputs["loss"])
+            total_loss = ((1-self.hps["task_weight"]) * link_output["loss"]) + ((1-self.hps["task_weight"]) * label_outputs["loss"])
 
             output.add_loss(task="total",       data=total_loss)
+            output.add_loss(task="seg",       data=seg_output["loss"])
             output.add_loss(task="link",        data=link_output["loss"])
             output.add_loss(task="label",       data=label_outputs["loss"])
 
         output.add_preds(task="label",          level="unit", data=label_outputs["preds"])
         output.add_preds(task="link",           level="unit", data=link_output["preds"])
+
 
         return output
 
