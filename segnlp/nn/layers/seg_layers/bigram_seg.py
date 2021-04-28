@@ -9,13 +9,13 @@ class BigramSegLayer(nn.Module):
 
     """
     def __init__(
-        self,
-        input_size,
-        hidden_size,
-        output_size,
-        label_emb_dim,
-        dropout=0.0,
-    ):
+                self,
+                input_size,
+                hidden_size,
+                output_size,
+                label_emb_dim,
+                dropout=0.0,
+                ):
         super().__init__()
         self.label_emb_dim = label_emb_dim
         self.clf = nn.Sequential(

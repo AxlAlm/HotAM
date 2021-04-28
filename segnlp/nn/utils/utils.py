@@ -234,9 +234,10 @@ def util_one_hot(matrix: Tensor, mask: Tensor, num_classes: int):
 
     return F.one_hot(thematrix, num_classes=num_classes)
 
+
 def scatter_repeat(
                     src:torch.tensor,
-                    value: torch.tensor, 
+                    values: torch.tensor, 
                     lengths:torch.tensor, 
                     length_mask:torch.BoolTensor, 
                     ):
@@ -246,16 +247,18 @@ def scatter_repeat(
     for example:
         if
             src = [1,2,3]
+            values = [a,b,c]
             lengths = [3,2,5,1,2]
             length_mask = [1,0,1,0,1]
         function returns
-        src = [1,1,1,0,0,2,2,2,2,2,0,3,3]
+        src = [a,a,a,0,0,b,b,b,b,b,0,c,c]
         what we do is we take the values in the src, place them (scatter them) in a larger tensor,
         then repeat each value in the larger tensor by a specified length
         
         use case if for exampel if you want the scores for segments in a document to be scattered over the tokens
         which the segment comprise of, but keep the values for tokens that are not apart of segments to 0
         TODO: add fill value?
+
     Parameters
     ----------
     src : torch.tensor

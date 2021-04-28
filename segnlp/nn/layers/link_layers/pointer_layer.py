@@ -44,32 +44,26 @@ class Pointer(nn.Module):
     def __init__(self, 
                 input_size:int, 
                 output_size:int, 
-                hidden_size:int=256, 
                 dropout:float=0.0, 
-                loss_redu:str="sum"
                 ):
         super().__init__()
 
-        self._hidden_size = hidden_size
-        self.input_layer = nn.Linear(input_size, input_size)
-        self.lstm_cell =  nn.LSTMCell(input_size, hidden_size)
-        self.attention = CBAttentionLayer(
-                                        input_dim=hidden_size,
-                                        )
-    
-        self.dropout = nn.Dropout(dropout)
+        # NOTE you cannot set hidden_size as hidden_size needs to be the same as input size
+        self.hidden_size = input_size
+        self.output_size = output_size
 
-        self.loss = TokenCrossEntropyLoss(reduction=loss_redu, ignore_index=-1)
+        self.input_layer = nn.Linear(input_size, input_size)
+        self.lstm_cell =  nn.LSTMCell(input_size, input_size)
+        self.attention = CBAttentionLayer(
+                                        input_dim=input_size,
+                                        )
+        self.dropout = nn.Dropout(dropout)
         
 
     def forward(self, 
-                input : Tensor,
-                bio_data: dict,
-                batch: ModelInput
-                # encoder_outputs:torch.tensor, 
-                # mask:torch.tensor,
-                # targets:torch.tensor=None,
-                # unit_tok_lengths:torch.tensor=None
+                rep_data : dict,
+                seg_data : dict,
+                batch: dict
                 ):
 
         if isinstance(input, tuple):
@@ -92,12 +86,12 @@ class Pointer(nn.Module):
             batch_size = input.shape[0]
             device = input.device
 
-            h_s = torch.rand((batch_size, self._hidden_size), device=device)
-            c_s = torch.rand((batch_size, self._hidden_size), device=device)
+            h_s = torch.rand((batch_size, self.hidden_size), device=device)
+            c_s = torch.rand((batch_size, self.hidden_size), device=device)
      
 
         decoder_input = torch.zeros(h_s.shape, device=device)
-        output = torch.zeros(batch_size, seq_len, seq_len, device=device)
+        logits = torch.zeros(batch_size, seq_len, seq_len, device=device)
         for i in range(seq_len):
             
             decoder_input = torch.sigmoid(self.input_layer(decoder_input))
@@ -105,21 +99,12 @@ class Pointer(nn.Module):
 
             h_s, c_s = self.lstm_cell(decoder_input, (h_s, c_s))
 
-            output[:, i] = self.attention(h_s, input, mask, return_softmax=False)
-        
-        
-        loss = None
-        if targets is not None:
-            loss = self.loss(
-                            unit_inputs=outputs, 
-                            unit_mask=mask,
-                            unit_tok_lengths=unit_tok_lengths,
-                            targets=targets,
-                            )
+            logits[:, i] = self.attention(h_s, input, mask, return_softmax=False)
 
-        preds = torch.argmax(output, dim=-1)
+        preds = torch.argmax(logits, dim=-1)
+
 
         return {
-                "loss": loss,
+                "logits": logits,
                 "preds":preds,
                 }

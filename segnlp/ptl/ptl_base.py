@@ -65,6 +65,7 @@ class PTLBase(ptl.LightningModule):
                     tasks:list,
                     all_tasks:list,
                     label_encoders:dict,
+                    task_labels:dict,
                     prediction_level:str,
                     task_dims:dict,
                     feature_dims:dict,
@@ -79,19 +80,20 @@ class PTLBase(ptl.LightningModule):
         self.tasks = tasks
         self.all_tasks = all_tasks
         self.label_encoders = label_encoders
-
-        seg_task = [t for t in tasks if "seg" in t][0]
-        self.bio_ids = {
-                        "B": [i for i,l in label_encoders[seg_task].id2label.items() if "B-" in l],
-                        "I": [i for i,l in label_encoders[seg_task].id2label.items() if "I-" in l],
-                        "O": [i for i,l in label_encoders[seg_task].id2label.items() if "O-" in l],
-                        }
+        self.task_labels = task_labels
+     
         self.inference = inference
         self.metrics = MetricContainer()
         self.outputs = {"val":[], "test":[]}
 
         self.OPT = self.hps["optimizer"]
         self.LR = self.hps["lr"]
+
+
+        self.encoding_scheme = "bio"
+
+
+
 
 
     def forward(self, batch:ModelInput):

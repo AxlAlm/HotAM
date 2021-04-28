@@ -14,6 +14,10 @@ from segnlp.nn.utils import agg_emb
 from segnlp.nn.utils import create_mask
 from segnlp.ptl import PTLBase
 
+from segnlp.nn.layers.base import SegLayer
+from segnlp.nn.layers.base import UnitLayer
+from segnlp.nn.layers.base import RepLayer
+
 
 class JointPN(PTLBase):
 
@@ -33,37 +37,37 @@ class JointPN(PTLBase):
     def __init__(self,  *args, **kwargs):   
         super().__init__(*args, **kwargs)
 
-        lstm_crf_params = self.hps.get("lstm_crf", {})
-        encoder_params = self.hps.get("llstm_encoder", {})
-        pointer_params = self.hps.get("pointer", {})
-        simple_label_l_params = self.hps.get("simpleclf-label", {})
+        self.seg = SegLayer(
+                            task = "seg",
+                            layer = LSTM_CRF, 
+                            hyperparams =  self.hps.get("lstm_crf", {}), 
+                            labels = self.task_labels["seg"],
+                            encoding_scheme = self.encoding_scheme,
+                            input_size =  self.feature_dims["word_embs"],
+                            output_size = self.task_dims["seg"],
+                            )
 
+        self.encoder = RepLayer(
+                                layer = LLSTMEncoder, 
+                                hyperparams = self.hps.get("llstm_encoder", {}),
+                                input_size = self.feature_dims["word_embs"] * 3
+                                )
 
-        lstm_crf_params["input_size"] = self.feature_dims["word_embs"]
-        lstm_crf_params["output_size"] = self.task_dims["seg"]
-        self.seg_layer = LSTM_CRF(**lstm_crf_params)
+        self.decoder = UnitLayer(
+                                task = "link",
+                                layer = Pointer,
+                                hyperparams = self.hps.get("pointer", {}),
+                                input_size = self.encoder.output_size,
+                                output_size = self.task_dims["link"]
+                                )
 
-
-        encoder_params["input_size"] = self.feature_dims["word_embs"] * 3
-        self.encoder = LLSTMEncoder(**encoder_params)
-
-
-        pointer_params["input_size"] = self.encoder.output_size
-        pointer_params["hidden_size"] = self.encoder.output_size
-        pointer_params["output_size"] = self.task_dims["link"]
-        self.decoder = Pointer(**pointer_params)
-
-
-        simple_label_l_params["input_size"] = self.encoder.output_size
-        simple_label_l_params["output_size"] = self.task_dims["label"]
-        simple_label_l_params["level"] = "unit"
-        self.label_clf =  SimpleCLF(**simple_label_l_params)
-
-        self.bio_decoder = BIODecoder(
-                                        B = self.bio_ids["B"],
-                                        I = self.bio_ids["I"],
-                                        O = self.bio_ids["O"],
-                                        )
+        self.label_clf =  UnitLayer(
+                                    task = "label",
+                                    layer = SimpleCLF,
+                                    hyperparams = self.hps.get("simpleclf-label", {}),
+                                    input_size = self.encoder.output_size,
+                                    output_size = self.task_dims["label"]
+                                    )
 
     @classmethod
     def name(self):
@@ -72,22 +76,12 @@ class JointPN(PTLBase):
 
     def forward(self, batch, output):
 
-        print("WORD EMB", batch["token"]["word_embs"].shape)
 
-        seg_output = self.seg_layer(
-                                    batch["token"]["word_embs"],
-                                    mask = batch["token"]["mask"],
-                                    lengths = batch["token"]["lengths"],
-                                    targets = batch["token"]["seg"] if not self.inference else None
-                                    )
-
-        bio_output = self.bio_decoder(
-                                        seg_output["preds"],
-                                        batch["token"]["lengths"],
-                                        )
-        unit_mask = create_mask(bio_output["unit"]["lengths"])
-
-            
+        seg_output = self.seg(
+                            input=batch["token"]["word_embs"],
+                            batch=batch
+                            )
+    
         unit_embs = agg_emb(
                             batch["token"]["word_embs"], 
                             lengths = bio_output["unit"]["lengths"],
@@ -95,33 +89,22 @@ class JointPN(PTLBase):
                             mode = "mix"
                             )
 
-
         encoder_out = self.encoder(
-                                    unit_embs, 
-                                    bio_output["unit"]["lengths"]
+                                    input=unit_embs,
+                                    batch=batch,
                                     )
-
-
+    
         label_outputs =  self.label_clf(
-                                        encoder_out[0],
-                                        targets = batch["token"]["label"] if not self.inference else None,
-                                        mask = unit_mask,
-                                        unit_tok_lengths = bio_output["unit"]["lengths_tok"]
-
+                                        rep_data = encoder_out,
+                                        seg_data = seg_output,
+                                        batch = batch
                                         )
 
-
         link_output = self.decoder(
-                                    encoder_out, 
-                                    mask = unit_mask, 
-                                    targets = batch["token"]["link"] if not self.inference else None,
-                                    unit_tok_lengths = bio_output["unit"]["lengths_tok"]
+                                    rep_data = encoder_out,
+                                    seg_data = seg_output,
+                                    batch = batch
                                     )
-
-        print("SEG LOSS", seg_output["loss"])
-        print("LABEL LOSS", label_outputs["loss"])
-        print("LINK LOSS", link_output["loss"])
-
 
         if not self.inference:
             total_loss = ((1-self.hps["task_weight"]) * link_output["loss"]) + ((1-self.hps["task_weight"]) * label_outputs["loss"])

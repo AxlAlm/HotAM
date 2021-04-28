@@ -6,6 +6,7 @@ import numpy as np
 #segnlp
 from segnlp.utils import ensure_numpy
 from segnlp.utils import ensure_flat
+from segnlp.nn.utils import create_mask
 
 
 class BIODecoder:
@@ -88,6 +89,7 @@ class BIODecoder:
 
             bio_data["max_units"] = max(unit_length, bio_data["max_units"])
 
+        bio_output["unit"]["mask"] = create_mask(bio_output["unit"]["lengths"])
   
         return bio_data
 

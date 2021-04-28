@@ -226,6 +226,7 @@ class Pipeline(Evaluation):
                         hyperparamaters:dict,
                         ):
 
+        print(self.config)
         model_args = dict(
                         hyperparamaters=hyperparamaters,
                         tasks=self.config["tasks"],
@@ -234,6 +235,7 @@ class Pipeline(Evaluation):
                         prediction_level=self.config["prediction_level"],
                         task_dims={t:len(l) for t,l in self.config["task2labels"].items() if t in self.config["tasks"]},
                         feature_dims=self.config["feature2dim"],
+                        task_labels=self.config["task2labels"]
                         )
         return model_args
 

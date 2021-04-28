@@ -34,6 +34,7 @@ class LSTM_CRF(nn.Module):
                 loss_redu:str = "mean"
                 ):
         super().__init__()
+        self.output_size = output_size
         self.loss_redu = loss_redu
         self.dropout = nn.Dropout(dropout)
         self.lstm = LSTM(  
