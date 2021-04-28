@@ -3,6 +3,7 @@
 #pytroch
 import torch
 import torch.nn as nn
+from torch import Tensor
 
 #segnlp
 from segnlp.nn.layers.rep_layers import LSTM
@@ -32,14 +33,14 @@ class LLSTMEncoder(nn.Module):
                                 num_layers=num_layers,
                                 bidir=bidir,
                                 )
-        self.output_size = hidden_size* (2 if bidir else 1)
+        self.output_size = hidden_size * (2 if bidir else 1)
 
 
-    def forward(self, X, lengths):
+    def forward(self, input:Tensor, batch:dict):
 
-        X = self.dropout(X)
+        X = self.dropout(input)
         X = torch.sigmoid(self.input_layer(X))
-        out, hidden = self.lstm(X, lengths)
+        out, hidden = self.lstm(X, batch["token"]["lengths"])
 
         return out, hidden
 

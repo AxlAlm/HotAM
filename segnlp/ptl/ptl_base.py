@@ -89,7 +89,6 @@ class PTLBase(ptl.LightningModule):
         self.OPT = self.hps["optimizer"]
         self.LR = self.hps["lr"]
 
-
         self.encoding_scheme = "bio"
 
 
@@ -211,12 +210,5 @@ class PTLBase(ptl.LightningModule):
             return [opt], [scheduler]
         else:
             return opt
-     
-
-
-
-
-
-
 
 

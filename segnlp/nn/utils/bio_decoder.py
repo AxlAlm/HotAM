@@ -89,7 +89,7 @@ class BIODecoder:
 
             bio_data["max_units"] = max(unit_length, bio_data["max_units"])
 
-        bio_output["unit"]["mask"] = create_mask(bio_output["unit"]["lengths"])
+        bio_data["unit"]["mask"] = create_mask(bio_data["unit"]["lengths"])
   
         return bio_data
 

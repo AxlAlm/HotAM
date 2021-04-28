@@ -15,13 +15,10 @@ class SimpleCLF(nn.Module):
     def __init__(self, 
                 input_size:int,
                 output_size:int, 
-                loss_redu:str="sum"
                 ):
         super().__init__()
         self.output_size = output_size
         self.clf = nn.Linear(input_size, output_size)
-        self._level = level
-        self.loss = TokenCrossEntropyLoss(reduction=loss_redu, ignore_index=-1)
     
     
     def forward(self,
@@ -31,8 +28,8 @@ class SimpleCLF(nn.Module):
                 ) -> dict:
 
         logits = self.clf(input)
-        preds = torch.argmax(outputs, dim=-1)
-        probs = torch.softmax(outputs, dim=-1)
+        preds = torch.argmax(logits, dim=-1)
+        probs = torch.softmax(logits, dim=-1)
 
         return {
                 "logits": logits,

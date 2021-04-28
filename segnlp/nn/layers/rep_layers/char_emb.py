@@ -26,6 +26,7 @@ class CharEmb(nn.Module):
                                     kernel_size=kernel_size, 
                                     groups=emb_size,
                                     )
+        
                                     
 
     def forward(self, char_encs):

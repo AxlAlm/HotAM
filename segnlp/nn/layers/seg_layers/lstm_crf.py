@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch import Tensor
+
 
 #segnlp
 from segnlp.nn.layers.rep_layers import LSTM
@@ -31,11 +33,9 @@ class LSTM_CRF(nn.Module):
                 num_layers:int=1, 
                 bidir:bool=True, 
                 dropout:float=0.0,
-                loss_redu:str = "mean"
                 ):
         super().__init__()
         self.output_size = output_size
-        self.loss_redu = loss_redu
         self.dropout = nn.Dropout(dropout)
         self.lstm = LSTM(  
                             input_size = input_size,
@@ -49,21 +49,24 @@ class LSTM_CRF(nn.Module):
                         num_tags=output_size,
                         batch_first=True
                         )
-    
 
     @classmethod
     def name(self):
         return "LSTM_CRF"
 
 
-    def forward(self, input_embs, mask, lengths, targets=None):
+    def forward(self, input:Tensor, batch:dict):
 
-        input_embs = self.dropout(input_embs)
+        lengths = batch["token"]["lengths"]
+        mask = batch["token"]["mask"]
+
+        input_embs = self.dropout(input)
         lstm_out, _ = self.lstm(input_embs, lengths)
         out = self.clf(lstm_out)
 
         loss = None
-        if targets is not None:
+        if not self.inference:
+            targets = batch["token"][self.task]
             targets[targets == -1] = 0
 
             loss = -self.crf(    

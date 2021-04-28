@@ -274,7 +274,7 @@ def scatter_repeat(
     [type]
         [description]
     """
-    src[length_mask] = value
+    src[length_mask] = values
     repeated_src = torch.repeat_interleave(src, lengths, dim=0)
     return repeated_src
 

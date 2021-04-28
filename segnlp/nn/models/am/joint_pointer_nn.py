@@ -37,6 +37,8 @@ class JointPN(PTLBase):
     def __init__(self,  *args, **kwargs):   
         super().__init__(*args, **kwargs)
 
+        print(kwargs)
+
         self.seg = SegLayer(
                             task = "seg",
                             layer = LSTM_CRF, 
@@ -46,12 +48,15 @@ class JointPN(PTLBase):
                             input_size =  self.feature_dims["word_embs"],
                             output_size = self.task_dims["seg"],
                             )
+        #self.seg.inference = self.inference
 
         self.encoder = RepLayer(
                                 layer = LLSTMEncoder, 
                                 hyperparams = self.hps.get("llstm_encoder", {}),
                                 input_size = self.feature_dims["word_embs"] * 3
                                 )
+        #self.encoder.inference = self.inference
+
 
         self.decoder = UnitLayer(
                                 task = "link",
@@ -60,6 +65,7 @@ class JointPN(PTLBase):
                                 input_size = self.encoder.output_size,
                                 output_size = self.task_dims["link"]
                                 )
+        #self.decoder.inference = self.inference
 
         self.label_clf =  UnitLayer(
                                     task = "label",
@@ -68,6 +74,8 @@ class JointPN(PTLBase):
                                     input_size = self.encoder.output_size,
                                     output_size = self.task_dims["label"]
                                     )
+        #self.label_clf.inference = self.inference
+
 
     @classmethod
     def name(self):
@@ -84,24 +92,24 @@ class JointPN(PTLBase):
     
         unit_embs = agg_emb(
                             batch["token"]["word_embs"], 
-                            lengths = bio_output["unit"]["lengths"],
-                            span_indexes = bio_output["unit"]["span_idxs"], 
+                            lengths = seg_output["unit"]["lengths"],
+                            span_indexes = seg_output["unit"]["span_idxs"], 
                             mode = "mix"
                             )
 
         encoder_out = self.encoder(
-                                    input=unit_embs,
-                                    batch=batch,
+                                    input = unit_embs,
+                                    batch = batch,
                                     )
     
         label_outputs =  self.label_clf(
-                                        rep_data = encoder_out,
+                                        input = encoder_out[0],
                                         seg_data = seg_output,
                                         batch = batch
                                         )
 
         link_output = self.decoder(
-                                    rep_data = encoder_out,
+                                    input = encoder_out,
                                     seg_data = seg_output,
                                     batch = batch
                                     )
