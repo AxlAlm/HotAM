@@ -35,12 +35,12 @@ def ensure_flat(item, mask=None):
         # Ugly fix for 2d arrays with differnet lengths
         if not isinstance(item[0], np.int):
             item = np.hstack(item)
-    
+
     if mask is not None:
         mask = ensure_flat(ensure_numpy(mask)).astype(bool)
         if mask.shape == item.shape:
             item = item[mask]
-    
+
 
     return item
 
@@ -85,7 +85,7 @@ def check_gpu(self, gpu:int, verbose=1) -> Tuple[bool, torch.device]:
     Parameters
     ----------
     gpu : int
-        gpu to check for 
+        gpu to check for
     verbose : int, optional
         print information or not, by default 1
 
@@ -163,9 +163,9 @@ def one_tqdm(desc:str):
             #     return e
             pbar.update(1)
             pbar.close()
-        
+
         return wrapper
-    
+
     return decorator
 
 
@@ -206,14 +206,14 @@ def copy_and_vet_dict(input_dict:dict):
             raise ValueError(f'"{v}" of type {type(v)} is not a valid type')
 
         output_dict[k] = v
-    
+
     return output_dict
 
 
 def download(url:str, save_path:str, desc:str):
 
     response = requests.get(url, stream=True)
-    total = int(response.headers.get('content-length')) #response.iter_content(chunk_size=max(int(total/1000), 1024*1024)), 
+    total = int(response.headers.get('content-length')) #response.iter_content(chunk_size=max(int(total/1000), 1024*1024)),
     progress_bar = tqdm(total=total, unit='iB', unit_scale=True, desc=desc)
 
     if total is None:
@@ -231,13 +231,13 @@ def download(url:str, save_path:str, desc:str):
 
 
 def unzip(zip_path:str, save_path:str):
-    
+
     print(zip_path)
     with zipfile.ZipFile(zip_path, 'r') as zipf:
         zipf.extractall(save_path)
 
 
-def dynamic_update(src, v, pad_value=0): 
+def dynamic_update(src, v, pad_value=0):
 
     a = np.array(list(src.shape[1:]))
     b = np.array(list(v.shape))
@@ -286,3 +286,20 @@ def tensor_dtype(numpy_dtype):
 def create_uid(string):
     uid = str(int(hashlib.sha256(string.encode('utf-8')).hexdigest(), 16) % 10**8)
     return uid
+
+
+def nCr(n, r):
+    """
+    A fast way to calculate binomial coefficients by Andrew Dalke (contrib).
+    Ref: https://stackoverflow.com/a/3025547
+    """
+    if 0 <= r <= n:
+        ntok = 1
+        ktok = 1
+        for t in range(1, min(r, n - r) + 1):
+            ntok *= n
+            ktok *= t
+            n -= 1
+        return ntok // ktok
+    else:
+        return 0

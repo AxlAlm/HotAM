@@ -29,7 +29,7 @@ punctuation += "’‘,`'" + '"'
 logger = get_logger(__name__)
 
 #data example
-''' 
+'''
 
 Data example
 
@@ -40,9 +40,9 @@ A1  Stance T3 For
 T4  Premise 716 851 What we acquired from team work is not only how to achieve the same goal with others but more importantly, how to get along with others
 T5  Premise 853 1086    During the process of cooperation, children can learn about how to listen to opinions of others, how to communicate with others, how to think comprehensively, and even how to compromise with other team members when conflicts occurred
 T6  Premise 1088 1191   All of these skills help them to get on well with other people and will benefit them for the whole life
-R1  supports Arg1:T4 Arg2:T3    
-R2  supports Arg1:T5 Arg2:T3    
-R3  supports Arg1:T6 Arg2:T3    
+R1  supports Arg1:T4 Arg2:T3
+R2  supports Arg1:T5 Arg2:T3
+R3  supports Arg1:T6 Arg2:T3
 T7  Claim 1332 1376 competition makes the society more effective
 A2  Stance T7 Against
 T8  Premise 1212 1301   the significance of competition is that how to become more excellence to gain the victory
@@ -50,8 +50,8 @@ T9  Premise 1387 1492   when we consider about the question that how to win the 
 T10 Premise 1549 1846   Take Olympic games which is a form of competition for instance, it is hard to imagine how an athlete could win the game without the training of his or her coach, and the help of other professional staffs such as the people who take care of his diet, and those who are in charge of the medical care
 T11 Claim 1927 1992 without the cooperation, there would be no victory of competition
 A3  Stance T11 For
-R4  supports Arg1:T10 Arg2:T11  
-R5  supports Arg1:T9 Arg2:T11   
+R4  supports Arg1:T10 Arg2:T11
+R5  supports Arg1:T9 Arg2:T11
 R6  supports Arg1:T8 Arg2:T7
 
 
@@ -68,12 +68,12 @@ Dataset Specs:
 3) All relations are within paragraphs
 
 
-''' 
+'''
 
 
 class PE(DataSet):
 
-    """Class for downloading, reading and parsing the Pursuasive Essay dataset found here: 
+    """Class for downloading, reading and parsing the Pursuasive Essay dataset found here:
 
     https://www.informatik.tu-darmstadt.de/ukp/research_6/data/argumentation_mining_1/argument_annotated_essays/index.en.jsp
 
@@ -84,15 +84,15 @@ class PE(DataSet):
 
     def __init__(self,
                 tasks:list,
-                prediction_level:str="token", 
-                sample_level:str="document", 
+                prediction_level:str="token",
+                sample_level:str="document",
                 dump_path:str="/tmp/"
                 ):
         task_labels = {
                             "seg": ["O","B","I"],
                             "label":["MajorClaim", "Claim", "Premise"],
                             # Originally stance labels are For and Against for Claims and MajorClaims
-                            # and for premsies supports or attacks. 
+                            # and for premsies supports or attacks.
                             # However, Against and attacks are functional equivalent so will use CON for both
                             # and for For and supports we will use PRO
                             #"stance":["For", "Against", "supports", "attacks"],
@@ -101,9 +101,9 @@ class PE(DataSet):
                             }
 
         self._stance2new_stance = {
-                                    "supports": "support", 
-                                    "For": "support", 
-                                    "Against": "attack", 
+                                    "supports": "support",
+                                    "For": "support",
+                                    "Against": "attack",
                                     "attacks": "attack",
                                     }
         super().__init__(
@@ -118,7 +118,7 @@ class PE(DataSet):
                         supported_sample_levels=["document", "paragraph", "sentence"],
                         about="""The corpus consists of argument annotated persuasive essays including annotations of argument components and argumentative relations.""",
                         url="https://www.informatik.tu-darmstadt.de/ukp/research_6/data/argumentation_mining_1/argument_annotated_essays_version_2/index.en.jsp",
-                        download_url= "https://www.informatik.tu-darmstadt.de/media/ukp/data/fileupload_2/argument_annotated_news_articles/ArgumentAnnotatedEssays-2.0.zip",
+                        download_url="https://tudatalib.ulb.tu-darmstadt.de/bitstream/handle/tudatalib/2422/ArgumentAnnotatedEssays-2.0.zip?sequence=1&isAllowed=y",
                         dump_path=dump_path,
                         )
 
@@ -135,7 +135,7 @@ class PE(DataSet):
         str
             path to downloaded data
         """
-    
+
         zip_dump_path = "/tmp/ArgumentAnnotatedEssays-2.0.zip"
         parent_folder = os.path.join(self.dump_path, "ArgumentAnnotatedEssays-2.0")
         data_folder = os.path.join(parent_folder, "brat-project-final")
@@ -143,12 +143,12 @@ class PE(DataSet):
             return data_folder
 
         zip_dump_path = "/tmp/ArgumentAnnotatedEssays-2.0.zip"
-        
+
         if not os.path.exists(zip_dump_path):
             desc = f"Downloading ArgumentAnnotatedEssays-2.0"
             u.download(url=self.download_url, save_path=zip_dump_path, desc=desc)
 
-        
+
         print("HELLO", zip_dump_path)
         u.unzip(zip_dump_path, self.dump_path)
         print("WTF")
@@ -224,16 +224,16 @@ class PE(DataSet):
         -------
         Tuple[str, str, str]
             difference in argument components/units back or forward( + or -), label, ID of argument component that
-            supports/attacks/for/against 
+            supports/attacks/for/against
         """
-        #e.g. supports Arg1:T10 Arg2:T11 
+        #e.g. supports Arg1:T10 Arg2:T11
         stance, arg1, arg2 = annotation_line.split()
 
         arg1_AC_ID = arg1.split(":")[1]
-        arg2_AC_ID = arg2.split(":")[1] 
+        arg2_AC_ID = arg2.split(":")[1]
 
-        #get difference in number of AC's 
-        #diff_in_acs = int(arg2_AC_ID[1:]) - int(arg1_AC_ID[1:]) 
+        #get difference in number of AC's
+        #diff_in_acs = int(arg2_AC_ID[1:]) - int(arg1_AC_ID[1:])
 
         #return str(diff_in_acs), stance, arg1_AC_ID
         return stance, arg1_AC_ID, arg2_AC_ID
@@ -299,7 +299,7 @@ class PE(DataSet):
         ac_id2span_storted = sorted(ac_id2span.items(), key= lambda x:x[1][0])
         ac_id2idx = {AC_ID:i for i, (AC_ID, *_) in enumerate(ac_id2span_storted)}
         ac_id2relation = {AC_ID: ac_id2idx[AC_REL_ID] - ac_id2idx[AC_ID]  for AC_ID, AC_REL_ID in ac_id2relation.items()}
-        
+
         #self.task_labels.extend(list(ac_id2relation.values()))
 
         # fill in some spans
@@ -317,14 +317,14 @@ class PE(DataSet):
 
         # sort again when added the missing spans
         ac_id2span = dict(sorted(ac_id2span_storted,key=lambda x:x[1][0]))
-        
+
         return ac_id2span, ac_id2ac, ac_id2stance, ac_id2relation
 
-    
-    def __get_label_dict(self, 
-                        ac_id2span:Dict[str,Tuple[int,int]], 
-                        ac_id2ac:Dict[str,str], 
-                        ac_id2stance:Dict[str,str], 
+
+    def __get_label_dict(self,
+                        ac_id2span:Dict[str,Tuple[int,int]],
+                        ac_id2ac:Dict[str,str],
+                        ac_id2stance:Dict[str,str],
                         ac_id2relation:Dict[str,str]) -> RangeDict:
         """creates a unified dict for label spans in the essay. Dict constructed contains the span tuple as a key
         and dict of all labels as value. The dict, a RangeDict, fetches the value of the span the key is within.
@@ -360,19 +360,19 @@ class PE(DataSet):
             stance = self._stance2new_stance.get(ac_id2stance.get(ac_id,"None"), "None")
 
             if "None" in ac_id:
-                unit_id = np.nan 
+                unit_id = np.nan
             else:
                 unit_id = current_unit_id
                 current_unit_id += 1
 
-            label = {   
-                        "label": ac_id2ac.get(ac_id,"None"), 
-                        "link_label": self._stance2new_stance.get(ac_id2stance.get(ac_id,"None"), "None"), 
+            label = {
+                        "label": ac_id2ac.get(ac_id,"None"),
+                        "link_label": self._stance2new_stance.get(ac_id2stance.get(ac_id,"None"), "None"),
                         "link": relation,
                         "span_id": i,
                         "unit_id": unit_id,
                     }
-            
+
 
             span2label[span] = label #[label, ac_id]
 
@@ -393,15 +393,15 @@ class PE(DataSet):
     	# https://arxiv.org/pdf/1612.08994.pdf (section 4) - join pointer model
     	# https://www.aclweb.org/anthology/P19-1464.pdf (section 4.1 -Dataset) - LSTM-Dist
     	# report that they randomly select 10% from the train set as validation set
-    	# there is no reference a dev or validation split in 
+    	# there is no reference a dev or validation split in
     	# https://arxiv.org/pdf/1704.06104.pdf - (LSTM-ER, LSTM-CNN-CRF)
-    	# 
+    	#
     	# For only segmentation:
     	# https://www.aclweb.org/anthology/W19-4501.pdf (LSTM-CRF + flair, bert etc),
     	# report that they use the following samples for dev set:
     	#
-    	# 13, 38, 41, 115, 140, 152, 156, 159, 162, 164, 201, 257,291, 324, 343, 361, 369, 371, 387, 389, 400 
-    	# 
+    	# 13, 38, 41, 115, 140, 152, 156, 159, 162, 164, 201, 257,291, 324, 343, 361, 369, 371, 387, 389, 400
+    	#
     	# however 21/322 = 6%, thus using smaller dev set
     	#
     	# We will randomly select a 10% as dev set
@@ -451,7 +451,7 @@ class PE(DataSet):
         # as pe start on 1 we shift all ids so it start at 0
         splits = {
                     0:{
-                        "train":np.array(train_set)-1, 
+                        "train":np.array(train_set)-1,
                         "val":  np.array(dev_set)-1,
                         "test": np.array(test_set)-1
                     }
@@ -460,7 +460,7 @@ class PE(DataSet):
 
 
     def _process_data(self, path_to_data):
-        """loads the Pursuasive Essay data and parse it into a DataSet. Also dumps the dataset 
+        """loads the Pursuasive Essay data and parse it into a DataSet. Also dumps the dataset
         locally so that one does not need to parse it again, only load the parsed data.
 
         if the dumppath exist data will be loaded from the pkl file and no parsing will be done
@@ -468,7 +468,7 @@ class PE(DataSet):
         Returns
         -------
         DataSet
-            
+
         """
         ann_files = sorted(glob(path_to_data+"/*.ann"))
         text_files = sorted(glob(path_to_data+"/*.txt"))
@@ -488,17 +488,17 @@ class PE(DataSet):
             ac_id2span, ac_id2ac,ac_id2stance, ac_id2relation = self.__parse_ann_file(ann, len(text))
 
             span2label = self.__get_label_dict(ac_id2span, ac_id2ac,ac_id2stance, ac_id2relation)
-                        
+
             data.append({
                             "sample_id":file_id,
-                            "text":text, 
+                            "text":text,
                             "text_type":"document",
                             "span_labels": span2label
                             })
- 
+
         return pd.DataFrame(data)
-        
-    
+
+
     @classmethod
     def label_colors(self):
         return {

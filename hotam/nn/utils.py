@@ -113,7 +113,7 @@ def create_mask(lengths, as_bool=True, flat=False):
     """
         >> torch.arange(max_len)
         tensor([0, 1, 2, 3, 4, 5])
-        
+
         >> torch.arange(max_len).expand(len(lengths), max_len)
         tensor([[0, 1, 2, 3, 4, 5],
                 [0, 1, 2, 3, 4, 5],
@@ -135,23 +135,23 @@ def create_mask(lengths, as_bool=True, flat=False):
 
     max_len = torch.max(lengths)
     mask = torch.arange(max_len).expand(len(lengths), max_len)  < lengths.unsqueeze(1)
-    
+
     if not as_bool:
         mask = mask.type(torch.uint8)
 
     if flat:
-        mask = mask.view(-1)      
-    
+        mask = mask.view(-1)
+
     return mask
 
 
 def get_all_possible_pairs(
-                            start: List[List[int]],
-                            end: List[List[int]],
-                            bidir=False,
-                            ) -> DefaultDict[str, List[List[Tuple[int]]]]:
+    start: List[List[int]],
+    end: List[List[int]],
+    bidir=False,
+) -> DefaultDict[str, List[List[Tuple[int]]]]:
 
-    all_possible_pairs = defaultdict(lambda:[])
+    all_possible_pairs = defaultdict(lambda: [])
     for idx_start, idx_end in zip(start, end):
 
         if bidir:
@@ -160,26 +160,31 @@ def get_all_possible_pairs(
             all_possible_pairs["idx"].append(idxs)
             all_possible_pairs["p1"].append(torch.tensor(p1))
             all_possible_pairs["p2"].append(torch.tensor(p2))
-            all_possible_pairs["start"].append(list(product(idx_start, repeat=2)))
+            all_possible_pairs["start"].append(
+                list(product(idx_start, repeat=2)))
             all_possible_pairs["end"].append(list(product(idx_end, repeat=2)))
-            all_possible_pairs["lengths"].append(len(all_possible_pairs["start"][-1]))
+            all_possible_pairs["lengths"].append(
+                len(all_possible_pairs["start"][-1]))
         else:
             idxs = list(combinations(range(len(idx_start)), r=2))
             p1, p2 = zip(*idxs)
             all_possible_pairs["idx"].append(idxs)
             all_possible_pairs["p1"].append(torch.tensor(p1))
-            all_possible_pairs["p2"].append(torch.tensor(p2))           
-            all_possible_pairs["start"].append(list(combinations(idx_start, r=2)))
+            all_possible_pairs["p2"].append(torch.tensor(p2))
+            all_possible_pairs["start"].append(
+                list(combinations(idx_start, r=2)))
             all_possible_pairs["end"].append(list(combinations(idx_end, r=2)))
-            all_possible_pairs["lengths"].append(len(all_possible_pairs["start"][-1])) 
+            all_possible_pairs["lengths"].append(
+                len(all_possible_pairs["start"][-1]))
 
-    all_possible_pairs["lengths"] = torch.LongTensor(all_possible_pairs["lengths"])
+    all_possible_pairs["lengths"] = torch.LongTensor(
+        all_possible_pairs["lengths"])
     all_possible_pairs["total_pairs"] = sum(all_possible_pairs["lengths"])
     return all_possible_pairs
 
 
 def pair_matrix(input_emb, modes=["cat", "mean"], rel_pos=False, pair_mask:torch.Tensor=None):
-    
+
     device = input_emb.device
     batch_size = input_emb.shape[0]
     dim1 = input_emb.shape[1]
@@ -192,7 +197,7 @@ def pair_matrix(input_emb, modes=["cat", "mean"], rel_pos=False, pair_mask:torch
     if "cat" in modes:
         to_cat.append(m)
         to_cat.append(mT)
-    
+
     if "multi" in modes:
         to_cat.append(m*mT)
 
@@ -201,22 +206,22 @@ def pair_matrix(input_emb, modes=["cat", "mean"], rel_pos=False, pair_mask:torch
 
     if "sum" in modes:
         to_cat.append(m+mT)
-    
+
 
     #adding one_hot encoding for the relative position
     if rel_pos:
         one_hot_dim = (max_units*2)-1
         one_hots = torch.tensor(
                                     [
-                                    np.diag(np.ones(one_hot_dim),i)[:max_units,:one_hot_dim] 
+                                    np.diag(np.ones(one_hot_dim),i)[:max_units,:one_hot_dim]
                                     for i in range(dim1-1, -1, -1)
-                                    ], 
+                                    ],
                                     dtype=torch.uint8,
                                     device=device
                                     )
         one_hots = one_hots.repeat_interleave(batch_size, dim=0)
         one_hots = one_hots.view((batch_size, dim1, dim1, one_hot_dim))
-        
+
         to_cat.append(one_hots)
 
     pair_matrix = torch.cat(to_cat, axis=-1)
@@ -226,7 +231,7 @@ def pair_matrix(input_emb, modes=["cat", "mean"], rel_pos=False, pair_mask:torch
         return pairs_flat[pair_mask]
     else:
         return pair_matrix
-    
+
 
 def util_one_hot(matrix: Tensor, mask: Tensor, num_classes: int):
     # check padding = -1
@@ -242,12 +247,12 @@ def util_one_hot(matrix: Tensor, mask: Tensor, num_classes: int):
 
 def scatter_repeat(
                     src:torch.tensor,
-                    value: torch.tensor, 
-                    lengths:torch.tensor, 
-                    length_mask:torch.BoolTensor, 
+                    value: torch.tensor,
+                    lengths:torch.tensor,
+                    length_mask:torch.BoolTensor,
                     ):
     """
-    
+
 
     scatter_repeat will shatter repeats of the src values into a new tensor.
 
@@ -265,7 +270,7 @@ def scatter_repeat(
 
         what we do is we take the values in the src, place them (scatter them) in a larger tensor,
         then repeat each value in the larger tensor by a specified length
-        
+
         use case if for exampel if you want the scores for segments in a document to be scattered over the tokens
         which the segment comprise of, but keep the values for tokens that are not apart of segments to 0
 
@@ -293,19 +298,20 @@ def scatter_repeat(
     return repeated_src
 
 
-def cumsum_zero(input:torch.tensor):
+def cumsum_zero(input_:torch.tensor):
     """
     torch.cumsum([4,5,10]) -> [4,9,19]
     cumsum_zero([4,5,10]) -> [0,4,19]
     """
-    return torch.cat((torch.zeros(1),torch.cumsum(input, dim=0)))[:-1].type(torch.LongTensor)
+    return torch.cat((input_.new_zeros(size=(1,)),
+                      torch.cumsum(input_, dim=0)))[:-1].type(torch.long)
 
 
 def index_select_array(input:torch.tensor, index:torch.tensor):
     """
-    given a input 3d tensor and a 1d index tensor selects an array at 
+    given a input 3d tensor and a 1d index tensor selects an array at
     dim == -1 according to index
-    
+
     selecting works like following.
 
         input[i][index[i]]
@@ -324,7 +330,7 @@ def index_select_array(input:torch.tensor, index:torch.tensor):
                         [0.6,0.6],
                     ]
                 ]
-    
+
     index = [2,1]
 
 
@@ -494,7 +500,7 @@ def pad_w_vectors():
 #     #     shape = (
 #     #             max_length,
 #     #             )
-    
+
 #     # print(index)
 #     # scattered = torch.zeros(shape, dtype=repeated_src.dtype).scatter_(0, index, repeated_src)
 #     # return scattered
